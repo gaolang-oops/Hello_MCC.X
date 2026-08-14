@@ -97,9 +97,9 @@
         <itemPath>Middlewares/MotorControl/MC_Fault.c</itemPath>
         <itemPath>Middlewares/MotorControl/motor_control.h</itemPath>
         <itemPath>Middlewares/MotorControl/motor_control.c</itemPath>
-        <itemPath>Middlewares/MotorControl/sine_table.c</itemPath>
-        <itemPath>Middlewares/MotorControl/sine_table.h</itemPath>
-        <itemPath>Middlewares/MotorControl/sine_table_asm.s</itemPath>
+        <itemPath>Middlewares/MotorControl/sincos.c</itemPath>
+        <itemPath>Middlewares/MotorControl/sincos.h</itemPath>
+        <itemPath>Middlewares/MotorControl/sincos_asm.s</itemPath>
       </logicalFolder>
     </logicalFolder>
     <logicalFolder name="ExternalFiles" displayName="重要文件" projectFiles="true">
@@ -123,7 +123,7 @@
         <targetDevice>dsPIC33EP128MC506</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
-        <platformTool>PICkit3PlatformTool</platformTool>
+        <platformTool>Simulator</platformTool>
         <languageToolchain>XC16</languageToolchain>
         <languageToolchainVersion>2.10</languageToolchainVersion>
         <platform>3</platform>

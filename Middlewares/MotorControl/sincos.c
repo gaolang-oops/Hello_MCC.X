@@ -1,6 +1,6 @@
 /*
- * File:   sine_table.c
- * 正弦查表模块（控制策略层，无硬件依赖）
+ * File:   sincos.c
+ * 正弦/余弦查表模块（控制策略层，无硬件依赖）
  *
  * 完整 128 点 Q1.15 正弦表（0~360°，每点间隔 2.8125°）。
  * 基础数据来自 Excel 计算的 0°~90° 共 33 点（idx 0~32），其余三象限由对称性推导。
@@ -8,8 +8,8 @@
  *
  * 定点化要点：
  *   - sin 浮点 → Q1.15：Q15 = round(sin × 32768)
- *   - 角度 → 索引：     idx = angle × 128 / 360（丢弃带小数的度数，改整数索引）
- *   - 1/4 波 → 全波：   Q2 镜像、Q3/Q4 取反（见头文件对称公式）
+ *   - 角度 → 索引：     idx = angle16 >> 9（取高 7 位，16-7=9）
+ *   - cos θ = sin(θ+90°)：索引 +32（90° = 128/4 点），& 0x7F 回卷
  *
  * 数据校验（关键采样点）：
  *     idx  / 角度    /  值   / 含义
@@ -20,7 +20,7 @@
  *     127  /357.1875°/ -1608 / 接近 360°
  */
 
-#include "sine_table.h"
+#include "sincos.h"
 
 /*
  * 128 点 Q1.15 正弦表（const，置于 Flash）。
@@ -58,16 +58,12 @@ static const int16_t s_sine_table[SINE_TABLE_SIZE] = {
     /* [121] */ -11039,  -9512,  -7962,  -6393,  -4808,  -3212,  -1608
 };
 
-int16_t SINE_Lookup(uint8_t index) {
-    /* & SINE_INDEX_MASK：自动 360° 回卷（0~127 合法，越界取模 128） */
-    return s_sine_table[index & SINE_INDEX_MASK];
-}
-
-int16_t SINE_LookupByDegree(uint16_t degree) {
-    /* 整数角度 → 索引（四舍五入） → 查表 */
-    return SINE_Lookup(SINE_DEG_TO_IDX(degree));
-}
-
-int16_t Sine16(uint16_t angle16) {
-    return s_sine_table[(angle16 >> 9) & SINE_INDEX_MASK]; //index=(angle16*128/65536)&127
+uint32_t SinCos16(uint16_t angle16) {
+    SinCos16_Result_t r;
+    /* index = (angle16 >> 9) & 127（取高 7 位；mask 防御性回卷） */
+    uint8_t idx = (uint8_t)((angle16 >> 9) & SINE_INDEX_MASK);
+    r.sc.sin = s_sine_table[idx];
+    /* cos θ = sin(θ+90°)：90° = 32 索引，+32 后 & 0x7F 回卷 */
+    r.sc.cos = s_sine_table[(uint8_t)((idx + 32u) & SINE_INDEX_MASK)];
+    return r.u32;
 }

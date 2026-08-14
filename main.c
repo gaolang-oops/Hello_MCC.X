@@ -62,7 +62,7 @@
 #include "Middlewares/MotorControl/hall_speed_fdbk.h"
 #include "Middlewares/MotorControl/MC_Fault.h"
 #include "Middlewares/MotorControl/mc_services.h"
-#include "Middlewares/MotorControl/sine_table.h"
+#include "Middlewares/MotorControl/sincos.h"
 #include "mc_protocol.h"
 #include "mc_fault_indicator.h"
 #include "mc_button.h"
@@ -138,22 +138,31 @@ static void MAIN_SECTION SelfCheck_Report(void) {
  * 后期新增模块测试（如 Park/Clarke 变换、PI 调节器）追加到本函数即可。
  */
 static void MAIN_SECTION ModuleTest_Run(void) {
-#if 1 /* 正弦查表验证: C 版 Sine16 vs 汇编版 Sine16_Asm
-       * angle16(UQ0.16) → idx = a16>>9 → _SinTable[idx] (Q1.15) */
+#if 1 /* 正弦/余弦查表验证: C 版 SinCos16 vs 汇编版 SinCos16_Asm(均一次返回 sin+cos)
+        * angle16(UQ0.16) → idx = a16>>9 → _SinTable[idx] (Q1.15)
+        * cos(θ)=sin(θ+90°): 90°=0x4000 恰为 2 的幂分点 → 索引精确+32(&0x7F 回卷) */
     {
         /* 关键采样点: 0°/45°/90°/180°/270°/357.19°/2.8125°(idx1) */
-        uint16_t angles[] = {0x0000, 0x2000, 0x4000, 0x8000, 0xC000, 0xFFFF, 0x0200};
-        int16_t  expect[] = {     0,  23170,  32767,      0, -32768,  -1608,   1608};
+        uint16_t angles[]  = {0x0000, 0x2000, 0x4000, 0x8000, 0xC000, 0xFFFF, 0x0200};
+        int16_t  sin_exp[] = {     0,  23170,  32767,      0, -32768,  -1608,   1608};
+        int16_t  cos_exp[] = { 32767,  23170,      0, -32768,      0,  32729,  32729};
         uint8_t i;
         uint8_t n = (uint8_t)(sizeof(angles)/sizeof(angles[0]));
-        printf("[SIN] angle16  idx   C_Sine16  Asm_Sine16   expect   cmp\n");
+        printf("[SIN] angle16  idx     C_sin     C_cos   Asm_sin   Asm_cos  expect_sin expect_cos  cmp\n");
         for (i = 0; i < n; i++) {
             uint16_t a16 = angles[i];
-            int16_t c_val   = Sine16(a16);
-            int16_t asm_val = Sine16_Asm(a16);
-            printf("      0x%04X  %3u  %8d  %8d  %8d   %s\n",
-                    a16, (uint16_t)(a16 >> 9), c_val, asm_val, expect[i],
-                    (c_val == asm_val && c_val == expect[i]) ? "OK" : "FAIL");
+            SinCos16_Result_t c_res;               /* C 版: sin+cos 一次取回 */
+            SinCos16_Result_t a_res;               /* 汇编版: sin+cos 一次取回 */
+            c_res.u32 = SinCos16(a16);
+            a_res.u32 = SinCos16_Asm(a16);
+#if 1
+            printf("      0x%04X  %3u  %8d  %8d  %8d  %8d  %10d  %10d   %s\n",
+                    a16, (uint16_t)(a16 >> 9), c_res.sc.sin, c_res.sc.cos,
+                    a_res.sc.sin, a_res.sc.cos,
+                    sin_exp[i], cos_exp[i],
+                    (c_res.u32 == a_res.u32 && c_res.sc.sin == sin_exp[i]
+                     && c_res.sc.cos == cos_exp[i]) ? "OK" : "FAIL");
+#endif
         }
     }
 #endif
@@ -164,19 +173,19 @@ static void MAIN_SECTION ModuleTest_Run(void) {
        * 单次净耗时 = (脉宽 - 基线脉宽) / N */
     {
         uint32_t N = 200000u;
-        volatile int16_t bench_sink;
+        volatile uint32_t bench_sink;  /* 汇编版返回 uint32(sin|cos<<16)，原样接住 */
         uint32_t i;
 
         INTERRUPT_GlobalDisable();   /* 关中断, 避免中断拉长脉宽 */
 
         LED_On(LED1);                /* --- C 版 --- */
-        for (i = 0; i < N; i++) bench_sink = Sine16(0x4000);
+        for (i = 0; i < N; i++) bench_sink = SinCos16(0x4000);
         LED_Off(LED1);
 
         Delay_ms(5);                 /* 间隔, 便于示波器分段 */
 
-        LED_On(LED1);                /* --- 汇编版 --- */
-        for (i = 0; i < N; i++) bench_sink = Sine16_Asm(0x4000);
+        LED_On(LED1);                /* --- 汇编版(同样 sin+cos 一体) --- */
+        for (i = 0; i < N; i++) bench_sink = SinCos16_Asm(0x4000);
         LED_Off(LED1);
 
         Delay_ms(5);

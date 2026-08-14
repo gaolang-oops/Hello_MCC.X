@@ -1,6 +1,6 @@
 ;===========================================================
-; sine_table.s
-; 正弦表（汇编版，用于与 sine_table.c 的 C 数组做对照）
+; sincos_asm.s
+; 正弦/余弦查表（汇编版，用于与 sincos.c 的 C 实现做对照）
 ;
 ; 架构：dsPIC33EP128MC506（16 位字寻址，FCY=70MHz）
 ; 数据宽度：.hword = 16 位半字 = C 的 int16_t（负数自动补码编码，
@@ -8,8 +8,8 @@
 ; 段属性：.const 段 + psv 属性，与 C 的 const int16_t[] 同机制（PSV 窗口可直接读）
 ;
 ; 内容：128 点 Q1.15 正弦表，0~360°，步长 2.8125°
-;       由 0°~90° 共 33 个基础值经 1/4 波对称生成（见 sine_table.h）
-;       值与 sine_table.c:s_sine_table 逐项一致，可逐行比对。
+;       由 0°~90° 共 33 个基础值经 1/4 波对称生成（见 sincos.h）
+;       值与 sincos.c:s_sine_table 逐项一致，可逐行比对。
 ;
 ; 符号：_SinTable（C 侧 __SinTable），与 C 的 static
 ;       s_sine_table 不同名，故二者并存无冲突。本表仅供对照，
@@ -27,7 +27,8 @@
     .include "p33EP128MC506.inc"
 
     ;---- 表参数
-    .equ    SINE_TABLE_SIZE, 128
+    .equ    SINE_TABLE_SIZE,    128
+    .equ    SINE_QUARTER_BYTES, 64    ; 90° 对应字节偏移 = 32 索引 × 2 字节/项
 
     .section .const, psv
     .global _SinTable
@@ -80,26 +81,54 @@ _SinTable:
     .hword -11039,  -9512,  -7962,  -6393,  -4808,  -3212,  -1608
 
     ;===========================================================
-    ; int16_t Sine16_Asm(uint16_t angle16)
-    ; 入口 W0 = angle16 (  UQ0.16, 0~65535 ↔ [0,360°)  )
-    ; 出口 W0 = Q1.15 正弦值
-    ; 算法: index = (angle16 × SINE_TABLE_SIZE) >> 16
+    ; uint32_t SinCos16_Asm(uint16_t angle16)
+    ; 一次查表同时返回正弦 + 余弦（后续 Park/Clarke 等需成对使用）
+    ;
+    ; 入口 W0 = angle16 ( UQ0.16, 0~65535 ↔ [0,360°)  )
+    ; 出口 W0 = Q1.15 正弦值（uint32 低 16 位，XC16 32位返回约定 W0=低字）
+    ;      W1 = Q1.15 余弦值（uint32 高 16 位）
+    ;
+    ; 算法: sin_idx = (angle16 × N) >> 16
+    ;       cos 字节偏移 = (sin_idx×2 + 64) mod 256
+    ;
+    ; 余弦原理：cos(θ) = sin(θ + 90°)；90° = 32 索引 = 64 字节偏移
+    ;   a) 回卷免费：全表 = 128 项 × 2 字节 = 恰好 256 字节，字节偏移域
+    ;      mod 256 = 索引 mod 128 = 角度 mod 360°。add.b 的 8 位加法
+    ;      溢出即 mod 256，无需掩码/分支，且免掉第二次 mul.uu（省 2 周期）
+    ;   b) 高字节安全：sl 后 W3 高字节本为 0x00；add.b 对 W 目标寄存器
+    ;      高字节清零（mdb 模拟器实测 WREG3=0x00FE，非符号扩展 0xFFFE）
+    ;   c) 零量化误差：90° 恰为 2 的幂分点（0x4000），等价于索引精确
+    ;      平移 +32，逐角度验证与 (sin_idx+32)&0x7F 完全一致
+    ;   d) 插值友好：+0x4000 不改变 angle16 低 9 位 → cos 与 sin 小数
+    ;      相位完全相同，W2 一份小数即可供 sin/cos 两个通道共享
+    ;
+    ; 注：TBLPAG 无需保存恢复 —— 它仅影响 TBLRD 指令，C 侧读 .const
+    ;     走数据空间 PSV 窗口（PSVPAG），二者互不干扰。
     ;===========================================================
     .section .text, code
-    .global _Sine16_Asm
-_Sine16_Asm:
-    ; --- 1) 角度→索引: index = (angle16 × N) >> 16
+    .global _SinCos16_Asm
+_SinCos16_Asm:
+    ; --- 1) 角度→正弦索引: sin_idx = (angle16 × N) >> 16
     mov     #SINE_TABLE_SIZE, W1 ; 表点数
-    mul.uu  W0, W1, W2           ; W3:W2 = (uint32)angle16<w0> × N<w1>
-    mov     W3, W0               ; 高16位=整数索引(0~N-1)放到w0中; 低16位(W2)=小数部分(留作插值)
-    sl      W0, #1, W0           ; 索引*2=字节偏移(每项16位=2字节; tbloffset返回字节地址)
-
-    ; --- 2) 索引→表项: TBLRD 程序空间读取
+    mul.uu  W0, W1, W2           ; W3:W2 = (uint32)angle16 × N
+                                 ; W3 = sin_idx(0~127); W2 = 小数部分(sin/cos 共用,留作插值)
+    ; --- 2) 表基地址: TBLRD 程序空间读取
     mov     #tblpage(_SinTable), W1
     mov     W1, TBLPAG           ; 表所在程序页
-    mov     #tbloffset(_SinTable), W1 ; 正弦表基地址在在程序页中的页偏移
-    add     W1, W0, W1           ; 字节地址w1 = 正弦表基址w1 + 字节偏移w0
-    tblrdl  [W1], W0             ; W0 = _SinTable[index]
+    mov     #tbloffset(_SinTable), W1 ; 正弦表基地址在程序页中的页偏移
+
+    ; --- 3) 取正弦表项
+    sl      W3, #1, W3           ; sin_idx*2=字节偏移(每项16位=2字节; tbloffset返回字节地址)
+                                 ; W3 = 0~254, 高字节恒 0x00
+    add     W1, W3, W5           ; W5 = _SinTable + sin 字节偏移
+    tblrdl  [W5], W0             ; W0 = sin = _SinTable[sin_idx]
+
+    ; --- 4) 取余弦表项: 字节偏移 +64(=90°), add.b mod 256 = 360° 回卷免费
+    mov     #SINE_QUARTER_BYTES, W4
+    ; add.b W3, #0x40, W3
+    add.b   W3, W4, W3           ; W3 = (sin_off + 64) mod 256 = cos 字节偏移
+    add     W1, W3, W5           ; W5 = _SinTable + cos 字节偏移
+    tblrdl  [W5], W1             ; W1 = cos = _SinTable[cos_idx]
     return
 
     .end
