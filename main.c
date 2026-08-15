@@ -138,14 +138,17 @@ static void MAIN_SECTION SelfCheck_Report(void) {
  * 后期新增模块测试（如 Park/Clarke 变换、PI 调节器）追加到本函数即可。
  */
 static void MAIN_SECTION ModuleTest_Run(void) {
-#if 1 /* 正弦/余弦查表验证: C 版 SinCos16 vs 汇编版 SinCos16_Asm(均一次返回 sin+cos)
-        * angle16(UQ0.16) → idx = a16>>9 → _SinTable[idx] (Q1.15)
-        * cos(θ)=sin(θ+90°): 90°=0x4000 恰为 2 的幂分点 → 索引精确+32(&0x7F 回卷) */
+#if 1 /* 正弦/余弦查表+线性插值验证: C 版 SinCos16 vs 汇编版 SinCos16_Asm(均一次返回 sin+cos)
+         * angle16(UQ0.16) → idx = a16>>9, frac = a16&0x1FF → t[idx] 与 t[idx+1] 两点插值(Q1.15)
+         * cos(θ)=sin(θ+90°): 90°=0x4000 恰为 2 的幂分点 → 索引精确+32(&0x7F 回卷),
+         *                      且 +0x4000 不改变低 9 位 → sin/cos 共享同一 frac
+         * 表上点(frac=0)期望=表值; 非表上点 0x0100/0x0300(frac=256,半步)与
+         * 0xFFFF(frac=511)专测插值+回卷路径, 期望值由宿主端全角度验证脚本给出 */
     {
-        /* 关键采样点: 0°/45°/90°/180°/270°/357.19°/2.8125°(idx1) */
-        uint16_t angles[]  = {0x0000, 0x2000, 0x4000, 0x8000, 0xC000, 0xFFFF, 0x0200};
-        int16_t  sin_exp[] = {     0,  23170,  32767,      0, -32768,  -1608,   1608};
-        int16_t  cos_exp[] = { 32767,  23170,      0, -32768,      0,  32729,  32729};
+        /* 采样点: 0°/0.5步/1步/1.5步/45°/90°/180°/270°/359.99°(含 idx127→0 回卷) */
+        uint16_t angles[]  = {0x0000, 0x0100, 0x0200, 0x0300, 0x2000, 0x4000, 0x8000, 0xC000, 0xFFFF};
+        int16_t  sin_exp[] = {     0,    804,   1608,   2410,  23170,  32767,      0, -32768,    -4};
+        int16_t  cos_exp[] = { 32767,  32748,  32729,  32669,  23170,      0, -32768,      0, 32766};
         uint8_t i;
         uint8_t n = (uint8_t)(sizeof(angles)/sizeof(angles[0]));
         printf("[SIN] angle16  idx     C_sin     C_cos   Asm_sin   Asm_cos  expect_sin expect_cos  cmp\n");

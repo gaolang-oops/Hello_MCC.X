@@ -10,6 +10,12 @@
  *   - sin 浮点 → Q1.15：Q15 = round(sin × 32768)
  *   - 角度 → 索引：     idx = angle16 >> 9（取高 7 位，16-7=9）
  *   - cos θ = sin(θ+90°)：索引 +32（90° = 128/4 点），& 0x7F 回卷
+ *   - 两点线性插值：     val = t[i] + ((t[i+1]-t[i]) × frac) >> 9（截断），
+ *                        frac = angle16 & 0x1FF（9 位小数相位，sin/cos 共享）
+ *                        (+0x4000 取 cos 不改变低 9 位 → 两通道 frac 相同)
+ *                        全角度对真实 sin/cos 最大误差 ~11.1 LSB（128 点
+ *                        线性插值的曲率误差上界 ~10.9 + 截断偏差），截断
+ *                        查表则达 1608
  *
  * 数据校验（关键采样点）：
  *     idx  / 角度    /  值   / 含义
@@ -62,8 +68,20 @@ uint32_t SinCos16(uint16_t angle16) {
     SinCos16_Result_t r;
     /* index = (angle16 >> 9) & 127（取高 7 位；mask 防御性回卷） */
     uint8_t idx = (uint8_t)((angle16 >> 9) & SINE_INDEX_MASK);
-    r.sc.sin = s_sine_table[idx];
+    /* 9 位小数相位（0~511）：+0x4000 取 cos 不改变低 9 位，
+     * sin/cos 两通道共享同一份 frac，各做一次两点插值 */
+    uint16_t frac = angle16 & 0x1FFu;
     /* cos θ = sin(θ+90°)：90° = 32 索引，+32 后 & 0x7F 回卷 */
-    r.sc.cos = s_sine_table[(uint8_t)((idx + 32u) & SINE_INDEX_MASK)];
+    int16_t s0 = s_sine_table[idx];
+    int16_t s1 = s_sine_table[(uint8_t)((idx + 1u) & SINE_INDEX_MASK)];
+    int16_t c0 = s_sine_table[(uint8_t)((idx + 32u) & SINE_INDEX_MASK)];
+    int16_t c1 = s_sine_table[(uint8_t)((idx + 33u) & SINE_INDEX_MASK)];
+    /* 两点线性插值，截断取整（直接取乘积>>9，不加舍入偏置）。
+     * 负数 >> 为算术右移（floor），与汇编版 mul.us 取高字 W7 逐比特
+     * 一致（全 65536 角度宿主端已验证）。
+     * (idx+1)&0x7F 使 idx=127 → t[0] 周期回卷；插值结果恒落在
+     * 相邻表值区间内，int16 永不溢出，免饱和处理 */
+    r.sc.sin = (int16_t)(s0 + ((((int32_t)s1 - s0) * frac) >> 9));
+    r.sc.cos = (int16_t)(c0 + ((((int32_t)c1 - c0) * frac) >> 9));
     return r.u32;
 }

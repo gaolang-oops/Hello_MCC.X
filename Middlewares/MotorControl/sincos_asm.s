@@ -1,6 +1,6 @@
 ;===========================================================
 ; sincos_asm.s
-; 正弦/余弦查表（汇编版，用于与 sincos.c 的 C 实现做对照）
+; 正弦/余弦查表 + 两点线性插值（汇编版，用于与 sincos.c 的 C 实现做对照）
 ;
 ; 架构：dsPIC33EP128MC506（16 位字寻址，FCY=70MHz）
 ; 数据宽度：.hword = 16 位半字 = C 的 int16_t（负数自动补码编码，
@@ -29,6 +29,9 @@
     ;---- 表参数
     .equ    SINE_TABLE_SIZE,    128
     .equ    SINE_QUARTER_BYTES, 64    ; 90° 对应字节偏移 = 32 索引 × 2 字节/项
+    .equ    SINE_STEP_BYTES,    2     ; 相邻表项字节偏移 = t[i] → t[i+1]
+    .equ    SINE_COS_BASE_ADJ,  SINE_QUARTER_BYTES - SINE_STEP_BYTES
+                                       ; cos 基偏移修正 = 90°字节64 - 游标已加的2 = 62
 
     .section .const, psv
     .global _SinTable
@@ -82,25 +85,51 @@ _SinTable:
 
     ;===========================================================
     ; uint32_t SinCos16_Asm(uint16_t angle16)
-    ; 一次查表同时返回正弦 + 余弦（后续 Park/Clarke 等需成对使用）
+    ; 一次查表+两点线性插值，同时返回正弦 + 余弦（后续 Park/Clarke等需成对使用）
     ;
     ; 入口 W0 = angle16 ( UQ0.16, 0~65535 ↔ [0,360°)  )
     ; 出口 W0 = Q1.15 正弦值（uint32 低 16 位，XC16 32位返回约定 W0=低字）
     ;      W1 = Q1.15 余弦值（uint32 高 16 位）
     ;
-    ; 算法: sin_idx = (angle16 × N) >> 16
+    ; 算法: sin_idx = (angle16 × N) >> 16,  frac16 = 乘积低 16 位
+    ;       frac16 = 0（表上点）→ 纯查表快速路径,免读 t[i+1]/免乘法
+    ;       frac16 ≠ 0          → val = t[i] + (frac16×(t[i+1]-t[i]))>>16
+    ;                               （截断，取乘积高字）
     ;       cos 字节偏移 = (sin_idx×2 + 64) mod 256
     ;
+    ; 双路径要点：
+    ;   a) 分流判据 cp0 W2：frac16 = frac9<<7，W2=0 ⟺ 恰为表上点
+    ;      (angle16 低 9 位全 0，概率 1/128)。此路径 mul.us 本就得 0，
+    ;      插值纯属浪费 → 跳过 2×(TBLRD+sub+mul.us+add) ≈ 省 14 周期
+    ;   b) fall-through 归插值：frac≠0 是连续相位累加的常态，bra 不跳
+    ;      仅 1 周期；frac=0 跳转 2 周期进快速路径
+    ;   c) 数值逐比特不变：快速路径返回 t[i]/t[i+32]，插值路径在
+    ;      frac=0 时数学上亦得 t[i]/t[i+32] → 两路径结果恒等，
+    ;
+    ; 插值要点：
+    ;   a) frac 免费复用：mul.uu 的低 16 位 W2 = frac9<<7，本来就是丢弃物；
+    ;      +0x4000 取 cos 不改变低 9 位 → sin/cos 共享同一份 W2
+    ;   b) mul.us W2,W4：无符号 frac16 × 有符号 delta（|delta|≤1608），
+    ;      乘积 < 2^27，32 位绝不溢出；直接取高字 W7 = floor(积/2^16)，
+    ;   c) t[i+1] 回卷：字节偏移游标 add.b +2，mod 256 使 idx=127 的
+    ;      t[i+1] 天然回卷到 t[0]（正弦周期性），无需掩码/分支
+    ;   d) 免饱和：插值结果恒落在 [min(s0,s1), max(s0,s1)]（截断向
+    ;      t[i] 侧取整只会更收敛），int16 永不溢出
+    ;
     ; 余弦原理：cos(θ) = sin(θ + 90°)；90° = 32 索引 = 64 字节偏移
-    ;   a) 回卷免费：全表 = 128 项 × 2 字节 = 恰好 256 字节，字节偏移域
-    ;      mod 256 = 索引 mod 128 = 角度 mod 360°。add.b 的 8 位加法
-    ;      溢出即 mod 256，无需掩码/分支，且免掉第二次 mul.uu（省 2 周期）
-    ;   b) 高字节安全：sl 后 W3 高字节本为 0x00；add.b 对 W 目标寄存器
-    ;      高字节清零（mdb 模拟器实测 WREG3=0x00FE，非符号扩展 0xFFFE）
-    ;   c) 零量化误差：90° 恰为 2 的幂分点（0x4000），等价于索引精确
-    ;      平移 +32，逐角度验证与 (sin_idx+32)&0x7F 完全一致
-    ;   d) 插值友好：+0x4000 不改变 angle16 低 9 位 → cos 与 sin 小数
-    ;      相位完全相同，W2 一份小数即可供 sin/cos 两个通道共享
+    ;   - 回卷免费：全表 = 128 项 × 2 字节 = 恰好 256 字节，字节偏移域
+    ;     mod 256 = 索引 mod 128 = 角度 mod 360°。add.b 的 8 位加法
+    ;     溢出即 mod 256，无需掩码/分支，且免掉第二次 mul.uu（省 2 周期）
+    ;   - 游标复用：sin 通道读 t[i+1] 后游标已 +2，cos 基偏移只需
+    ;     add.b +62（= 90°字节 64 - 已加的 2）
+    ;   - 高字节安全：sl 后 W3 高字节本为 0x00；add.b 对 W 目标寄存器
+    ;     高字节清零（mdb 模拟器实测 WREG3=0x00FE，非符号扩展 0xFFFE）
+    ;   - 零量化误差：90° 恰为 2 的幂分点（0x4000），等价于索引精确
+    ;     平移 +32，逐角度验证与 (sin_idx+32)&0x7F 完全一致
+    ;
+    ; 寄存器分工：W0=s0→sin  W1=表基址→cos  W2=frac16(共享)
+    ;             W3=字节偏移游标  W4=t[i+1]→delta  W5=地址暂存
+    ;             W6:W7=乘积(取高字 W7)  W8=cos 基值
     ;
     ; 注：TBLPAG 无需保存恢复 —— 它仅影响 TBLRD 指令，C 侧读 .const
     ;     走数据空间 PSV 窗口（PSVPAG），二者互不干扰。
@@ -108,26 +137,57 @@ _SinTable:
     .section .text, code
     .global _SinCos16_Asm
 _SinCos16_Asm:
-    ; --- 1) 角度→正弦索引: sin_idx = (angle16 × N) >> 16
+    ; --- 1) 角度→正弦索引 + 小数相位: sin_idx = (angle16 × N) >> 16
     mov     #SINE_TABLE_SIZE, W1 ; 表点数
     mul.uu  W0, W1, W2           ; W3:W2 = (uint32)angle16 × N
-                                 ; W3 = sin_idx(0~127); W2 = 小数部分(sin/cos 共用,留作插值)
+                                 ; W3 = sin_idx(0~127)
+                                 ; W2 = frac16 = frac9<<7 (sin/cos 共享,插值权重)
     ; --- 2) 表基地址: TBLRD 程序空间读取
     mov     #tblpage(_SinTable), W1
     mov     W1, TBLPAG           ; 表所在程序页
-    mov     #tbloffset(_SinTable), W1 ; 正弦表基地址在程序页中的页偏移
+    mov     #tbloffset(_SinTable), W1 ; 正弦表字节基地址(W1 全程保留,两通道复用)
 
-    ; --- 3) 取正弦表项
+    ; --- 3) 分流: 小数相位为 0 → 表上点, 跳过插值走纯查表
+    cp0     W2                   ; frac16 = 0 ⟺ angle16 低 9 位全 0
+    bra     Z, _TableOnly        ; 表上点(1/128 概率)→快速路径;
+                                 ; frac≠0 常态不跳转(1 周期)直落插值
+
+    ; --- 4) sin 通道: 读 t[i]/t[i+1] → mul.us 取高字
     sl      W3, #1, W3           ; sin_idx*2=字节偏移(每项16位=2字节; tbloffset返回字节地址)
                                  ; W3 = 0~254, 高字节恒 0x00
     add     W1, W3, W5           ; W5 = _SinTable + sin 字节偏移
-    tblrdl  [W5], W0             ; W0 = sin = _SinTable[sin_idx]
+    tblrdl  [W5], W0             ; W0 = s0 = _SinTable[sin_idx]
+    add.b   W3, #SINE_STEP_BYTES, W3 ; 游标 +2 → t[i+1]; add.b mod 256 →
+                                 ; idx=127 回卷 t[0](周期性)
+    add     W1, W3, W5
+    tblrdl  [W5], W4             ; W4 = s1 = _SinTable[sin_idx+1]
+    sub     W4, W0, W4           ; W4 = ds = s1 - s0 (有符号, |ds|≤1608)
+    mul.us  W2, W4, W6           ; W7:W6 = frac16(无符号) × ds(有符号) < 2^27
+    add     W0, W7, W0           ; W0 = sin = s0 + (ds×frac16>>16)  (W0 就此定稿)
 
-    ; --- 4) 取余弦表项: 字节偏移 +64(=90°), add.b mod 256 = 360° 回卷免费
-    mov     #SINE_QUARTER_BYTES, W4
-    ; add.b W3, #0x40, W3
-    add.b   W3, W4, W3           ; W3 = (sin_off + 64) mod 256 = cos 字节偏移
-    add     W1, W3, W5           ; W5 = _SinTable + cos 字节偏移
+    ; --- 5) cos 通道: 基偏移 +62(=90°字节64-已加2), 同一套插值流程
+    mov     #SINE_COS_BASE_ADJ, W4 ; 62 = 90°字节64 - 游标已加的 2
+                                  ; (add.b 立即数仅支持 0~31,故借寄存器,
+                                  ;  与原版 mov #64,W4 + add.b 同一手法)
+    add.b   W3, W4, W3            ; W3 = (sin_off+2+62) mod 256 = c0 cos 基偏移
+    add     W1, W3, W5           ; W5 = _SinTable<w1> + c0 cos 字节偏移
+    tblrdl  [W5], W8             ; W8 = c0 = _SinTable[cos_idx]
+    add.b   W3, #SINE_STEP_BYTES, W3 ; 游标 +2 → t[c+1] (mod 256 回卷)
+    add     W1, W3, W5			 ; W5 = _SinTable<w1> + c1 cos 字节偏移
+    tblrdl  [W5], W4             ; W4 = c1 = _SinTable[cos_idx+1]
+    sub     W4, W8, W4           ; W4 = dc = c1 - c0 (有符号)
+    mul.us  W2, W4, W6           ; W7:W6 = frac16 × dc
+    add     W8, W7, W1           ; W1 = cos = c0 + (dc×frac16>>16)
+    return
+
+    ; --- 快速路径: 表上点纯查表(即原截断查表版,免 t[i+1]/免乘法)
+_TableOnly:
+    sl      W3, #1, W3           ; sin_idx*2 = sin 字节偏移
+    add     W1, W3, W5
+    tblrdl  [W5], W0             ; W0 = sin = _SinTable[sin_idx]
+    mov     #SINE_QUARTER_BYTES, W4 ; 64 = 90° 字节偏移
+    add.b   W3, W4, W3           ; (sin_off + 64) mod 256 = cos 字节偏移
+    add     W1, W3, W5
     tblrdl  [W5], W1             ; W1 = cos = _SinTable[cos_idx]
     return
 
