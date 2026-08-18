@@ -175,20 +175,20 @@ static void MAIN_SECTION ModuleTest_Run(void) {
        *   第1段 = C 版。第2段 = 汇编版。   第3段 = 空循环(基线)
        * 单次净耗时 = (脉宽 - 基线脉宽) / N */
     {
-        uint32_t N = 200000u;
+        uint32_t N = 100000u;
         volatile uint32_t bench_sink;  /* 汇编版返回 uint32(sin|cos<<16)，原样接住 */
         uint32_t i;
 
         INTERRUPT_GlobalDisable();   /* 关中断, 避免中断拉长脉宽 */
 
         LED_On(LED1);                /* --- C 版 --- */
-        for (i = 0; i < N; i++) bench_sink = SinCos16(0x4000);
+        for (i = 0; i < N; i++) bench_sink = SinCos16(0x0300);
         LED_Off(LED1);
 
         Delay_ms(5);                 /* 间隔, 便于示波器分段 */
 
         LED_On(LED1);                /* --- 汇编版(同样 sin+cos 一体) --- */
-        for (i = 0; i < N; i++) bench_sink = SinCos16_Asm(0x4000);
+        for (i = 0; i < N; i++) bench_sink = SinCos16_Asm(0x0300);
         LED_Off(LED1);
 
         Delay_ms(5);

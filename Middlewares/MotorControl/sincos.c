@@ -8,8 +8,10 @@
  *
  * 定点化要点：
  *   - sin 浮点 → Q1.15：Q15 = round(sin × 32768)
- *   - 角度 → 索引：     idx = angle16 >> 9（取高 7 位，16-7=9）
- *   - cos θ = sin(θ+90°)：索引 +32（90° = 128/4 点），& 0x7F 回卷
+ *   - 角度 → 索引：     idx = angle16 >> 9（取高 7 位，16-7=9，恒 0~127 免 mask）
+ *   - cos θ = sin(θ+90°)：angle16 + 0x4000 后 >>9（uint16 加法溢出免费
+ *                        回卷；且不改变低 9 位 → sin/cos 共享 frac）
+ *   - 表尾垫 1 项 t[128]=t[0]：t[idx+1] 直接索引，免 & 0x7F 回卷
  *   - 两点线性插值：     val = t[i] + ((t[i+1]-t[i]) × frac) >> 9（截断），
  *                        frac = angle16 & 0x1FF（9 位小数相位，sin/cos 共享）
  *                        (+0x4000 取 cos 不改变低 9 位 → 两通道 frac 相同)
@@ -31,6 +33,9 @@
 /*
  * 128 点 Q1.15 正弦表（const，置于 Flash）。
  * 布局：每行 8 项，共 16 行；象限边界用注释标注。
+ * 末尾垫 1 项 [128]=0（= t[0]，正弦周期性），共 129 项：idx=127 时
+ * t[idx+1] 直接索引到垫项，免 & 0x7F 回卷掩码（-O0 下每个 mask/cast
+ * 都是真实指令；代价仅 +2 字节 Flash）。
  *
  * 对称推导（q[i] = 0°~90° 基础值，idx 0~32）：
  *   Q1  idx 0  ~32  :  q[i]
@@ -38,7 +43,7 @@
  *   Q3  idx 64 ~96  : -q[i - 64]       （含 table[96] = -q[32] = -32768 硬编码）
  *   Q4  idx 97 ~127 : -q[128 - i]
  */
-static const int16_t s_sine_table[SINE_TABLE_SIZE] = {
+static const int16_t s_sine_table[SINE_TABLE_SIZE + 1u] = {
     /* Q1: 0° ~ 90° (idx 0~32) — 直接取基础值 */
     /* [ 0] */      0,   1608,   3212,   4808,   6393,   7962,   9512,  11039,
     /* [ 8] */  12540,  14010,  15447,  16846,  18205,  19520,  20788,  22006,
@@ -61,27 +66,27 @@ static const int16_t s_sine_table[SINE_TABLE_SIZE] = {
     /* [ 97] */ -32729, -32610, -32413, -32138, -31786, -31357, -30853, -30274,
     /* [105] */ -29622, -28899, -28106, -27246, -26320, -25330, -24279, -23170,
     /* [113] */ -22006, -20788, -19520, -18205, -16846, -15447, -14010, -12540,
-    /* [121] */ -11039,  -9512,  -7962,  -6393,  -4808,  -3212,  -1608
+    /* [121] */ -11039,  -9512,  -7962,  -6393,  -4808,  -3212,  -1608,
+    /* [128] */      0   /* ← 垫表项 = t[0]（360° 回卷），仅供 idx+1 索引 */
 };
 
 uint32_t SinCos16(uint16_t angle16) {
     SinCos16_Result_t r;
-    /* index = (angle16 >> 9) & 127（取高 7 位；mask 防御性回卷） */
-    uint8_t idx = (uint8_t)((angle16 >> 9) & SINE_INDEX_MASK);
-    /* 9 位小数相位（0~511）：+0x4000 取 cos 不改变低 9 位，
-     * sin/cos 两通道共享同一份 frac，各做一次两点插值 */
-    uint16_t frac = angle16 & 0x1FFu;
-    /* cos θ = sin(θ+90°)：90° = 32 索引，+32 后 & 0x7F 回卷 */
+    /* 索引 = 高 7 位：angle16 >> 9 恒 0~127，无需 & 0x7F。
+     * cos θ = sin(θ+90°)：角度域 +0x4000 借 uint16 加法溢出免费回卷
+     * （90° 为 2 的幂分点 → 索引平移无量化误差），且不改变低 9 位
+     * → sin/cos 两通道共享同一份 frac */
+    uint16_t idx  = (uint16_t)(angle16 >> 9);
+    uint16_t cidx = (uint16_t)((uint16_t)(angle16 + 0x4000u) >> 9);
+    uint16_t frac = angle16 & 0x1FFu;      /* 9 位小数相位（0~511） */
     int16_t s0 = s_sine_table[idx];
-    int16_t s1 = s_sine_table[(uint8_t)((idx + 1u) & SINE_INDEX_MASK)];
-    int16_t c0 = s_sine_table[(uint8_t)((idx + 32u) & SINE_INDEX_MASK)];
-    int16_t c1 = s_sine_table[(uint8_t)((idx + 33u) & SINE_INDEX_MASK)];
-    /* 两点线性插值，截断取整（直接取乘积>>9，不加舍入偏置）。
-     * 负数 >> 为算术右移（floor），与汇编版 mul.us 取高字 W7 逐比特
-     * 一致（全 65536 角度宿主端已验证）。
-     * (idx+1)&0x7F 使 idx=127 → t[0] 周期回卷；插值结果恒落在
-     * 相邻表值区间内，int16 永不溢出，免饱和处理 */
-    r.sc.sin = (int16_t)(s0 + ((((int32_t)s1 - s0) * frac) >> 9));
-    r.sc.cos = (int16_t)(c0 + ((((int32_t)c1 - c0) * frac) >> 9));
+    int16_t s1 = s_sine_table[idx + 1u];   /* 表尾垫 1 项 → idx=127 免回卷 */
+    int16_t c0 = s_sine_table[cidx];
+    int16_t c1 = s_sine_table[cidx + 1u];  /* 同上 */
+    /* 两点线性插值，截断取整（乘积 >>9，不加舍入偏置）。
+     * |Δ|≤1608、frac≤511 均在 16 位内 → __builtin_mulss 编译为单周期
+     * 插值结果恒落在相邻表值区间内，int16 永不溢出，免饱和处理 */
+    r.sc.sin = (int16_t)(s0 + (__builtin_mulss((int16_t)(s1 - s0), (int16_t)frac) >> 9));
+    r.sc.cos = (int16_t)(c0 + (__builtin_mulss((int16_t)(c1 - c0), (int16_t)frac) >> 9));
     return r.u32;
 }
