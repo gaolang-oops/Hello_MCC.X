@@ -204,6 +204,27 @@ static void MAIN_SECTION ModuleTest_Run(void) {
 #endif
 }
 
+/*
+ * VofaWave_SendSine
+ * 50Hz 正弦波经 UART2 送 VOFA+ 显示(FireWater 文本协议)。
+ * 相位累加 + SinCos16 查表,printf("%d\n") 输出 Q1.15 原值
+ * 50Hz=0.02s周期=20ms。每1ms执行一次此函数，则最多只能输出20ms/1ms=20个点
+ * 20个点均分360度，则相位步进 65536/20=3276.8→3277
+ * uint16 累加溢出即 360° 自动回卷。
+ * 串口容量：115200 波特 ÷ 10 bit/字节(8N1) = 11.52 KB/s
+ * 单帧阻塞 <400μs(printf 经 uart2.c 的 write() 重定向,逐字节阻塞)。
+ * VOFA+ 侧:协议选 FireWater,串口 115200-8-N-1,通道0 即正弦
+ * (纵轴为 Q1.15 原值,-32768~32767)。
+ */
+static void MAIN_SECTION VofaWave_SendSine(void) {
+    static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16) */
+    SinCos16_Result_t r;
+
+    s_phase += 3277u;
+    r.u32 = SinCos16(s_phase);
+    printf("%d\n", r.sc.sin);
+}
+
 int MAIN_SECTION main(void) {
     // initialize the device
     SYSTEM_Initialize();
@@ -249,6 +270,9 @@ int MAIN_SECTION main(void) {
             MCButton_Tick1ms();
             Motor_Tick();
             MCFaultIndicator_Tick1ms();   /* LED 心跳/故障闪烁 */
+#if 1 /* 调试:50Hz 正弦波送 VOFA+(FireWater 协议) */
+            VofaWave_SendSine();
+#endif
         }
 
         /* ===== Tier-3 监控层(500ms 慢节拍) =====
