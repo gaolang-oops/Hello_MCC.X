@@ -14,6 +14,7 @@
 #include "Drivers/BSP/bsp_gpio.h"
 #include "Middlewares/MotorControl/motor_control.h"
 #include "Middlewares/MotorControl/MC_Fault.h"
+#include "user_manager.h"
 
 typedef enum {
     BTN_IDLE = 0,
@@ -31,7 +32,7 @@ static BtnDebounce_t s_key0;
 static BtnDebounce_t s_key1;
 static BtnDebounce_t s_key2;
 
-static void btn_reset(BtnDebounce_t *b) {
+static void MOTOR_SECTION btn_reset(BtnDebounce_t *b) {
     b->phase  = BTN_IDLE;
     b->cnt_ms = 0;
 }
@@ -40,7 +41,7 @@ static void btn_reset(BtnDebounce_t *b) {
  * 通用短按消抖（KEY0/KEY1）。
  * 返回 true = 一次有效"按下并松开"事件。
  */
-static bool btn_short_tick(BtnDebounce_t *b, KEY_Name_e key) {
+static bool MOTOR_SECTION btn_short_tick(BtnDebounce_t *b, KEY_Name_e key) {
     uint8_t pressed = (KEY_Get_State(key) == 0);
 
     switch (b->phase) {
@@ -73,7 +74,7 @@ static bool btn_short_tick(BtnDebounce_t *b, KEY_Name_e key) {
  * 持续按下计时，松手时若 hold >= BTN_LONG_PRESS_MS 则触发。
  * 返回 true = 一次有效长按事件。
  */
-static bool btn_long_tick(BtnDebounce_t *b, KEY_Name_e key) {
+static bool MOTOR_SECTION btn_long_tick(BtnDebounce_t *b, KEY_Name_e key) {
     uint8_t pressed = (KEY_Get_State(key) == 0);
 
     switch (b->phase) {
@@ -106,13 +107,13 @@ static bool btn_long_tick(BtnDebounce_t *b, KEY_Name_e key) {
     return false;
 }
 
-void MCButton_Init(void) {
+void MOTOR_SECTION MCButton_Init(void) {
     btn_reset(&s_key0);
     btn_reset(&s_key1);
     btn_reset(&s_key2);
 }
 
-void MCButton_Tick1ms(void) {
+void MOTOR_SECTION MCButton_Tick1ms(void) {
     if (btn_short_tick(&s_key0, KEY0)) {
         Motor_SetCommand(MOTOR_CMD_START);
     }

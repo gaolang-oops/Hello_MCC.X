@@ -115,7 +115,11 @@ uint16_t BSP_ADC_TimeBase_GetTickMs(void);
 bool     BSP_ADC_TimeBase_Is500msFlag(void);
 void     BSP_ADC_TimeBase_Clear500msFlag(void);
 
-/* ---- 回调注册（在 ISR 内调用，须短小） ---- */
+/* ---- 回调注册（多槽，在 ISR 内按注册顺序调用，须短小） ----
+ * 多模块可各自注册共存（如 过流检测 + DAC 测试）。
+ * 仅限初始化期（中断使能前）调用，无并发保护；槽满 VERIFY 停机暴露配置错误。 */
+#define BSP_ADC_CB50US_MAX   4
+#define BSP_ADC_CB1MS_MAX    4
 void BSP_ADC_TimeBase_Register50us(ADC_TimeBase_Callback_t cb);
 void BSP_ADC_TimeBase_Register1ms(ADC_TimeBase_Callback_t cb);
 

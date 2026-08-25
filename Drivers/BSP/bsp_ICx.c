@@ -48,7 +48,7 @@ typedef struct {
     uint16_t rp_num; // RP/RPI 重映射编号
 } IC_ConfigTypeDef;
 
-static const IC_ConfigTypeDef ICAP_RAM g_IC_Cfg[IC_COUNT] = {
+static const IC_ConfigTypeDef g_IC_Cfg[IC_COUNT] = {
     // IC1：RG8 / RP120
     [IC1_IDX] =
     { .idx = IC1_IDX, .pin_name = "RG8", .tris = &TRISG, .port = &PORTG, .bit_pos = 8, .rp_num = 120,},
@@ -168,7 +168,7 @@ uint8_t ICAP_SECTION BSP_ICx_ReadHall(void) {
  * BSP_ICx_RegisterIsrHandler
  * 上层（经 mc_services）注册 IC ISR 统一处理函数。
  */
-void BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler) {
+void ICAP_SECTION BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler) {
     s_isr = handler;
 }
 
@@ -176,15 +176,15 @@ void BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler) {
  * IC ISR 强覆盖（压制 MCC ic1/2/3.c 中的弱符号）。
  * 三路中断触发同一 handler；未注册时 no-op。
  */
-void IC1_CallBack(void) {
+void ICAP_SECTION IC1_CallBack(void) {
     if (s_isr) s_isr();
 }
 
-void IC2_CallBack(void) {
+void ICAP_SECTION IC2_CallBack(void) {
     if (s_isr) s_isr();
 }
 
-void IC3_CallBack(void) {
+void ICAP_SECTION IC3_CallBack(void) {
     if (s_isr) s_isr();
 }
 

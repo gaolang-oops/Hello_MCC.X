@@ -42,21 +42,18 @@ extern "C" {
 
 #define CORE_SECTION            __attribute__ ((section(".core_section")))
 #define MAIN_SECTION            CORE_SECTION
+#define MOTOR_SECTION           CORE_SECTION
+#define TEST_SECTION            CORE_SECTION
 
 #define BSP_SECTION             __attribute__ ((section(".bsp_section")))
 #define GPIO_SECTION            BSP_SECTION
 #define ICAP_SECTION            BSP_SECTION
 #define UART_SECTION            BSP_SECTION
 #define TIMER_SECTION           BSP_SECTION
-    
-#define CORE_RAM                __attribute__ ((section (".core_ram")))
-#define MAIN_RAM                CORE_RAM
+#define ADC_SECTION           	BSP_SECTION
 
-#define BSP_RAM                 __attribute__ ((section (".bsp_ram")))
-#define GPIO_RAM                BSP_RAM
-#define ICAP_RAM                BSP_RAM
-#define UART_RAM                BSP_RAM
-    
+#define COMP_SECTION            __attribute__ ((section(".components_section")))
+
 /* Interrupt manager */
 //CPU中断优先级为5，可以响应用户中断6 7
 #define ENIE()      SET_CPU_IPL(5)

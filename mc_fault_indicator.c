@@ -19,6 +19,7 @@
 #include "mc_fault_indicator.h"
 #include "Middlewares/MotorControl/MC_Fault.h"        /* MC_GetFault / MC_Fault_e */
 #include "Drivers/BSP/bsp_gpio.h"                     /* LED_On/Off */
+#include "user_manager.h"
 
 /* ---- 闪烁时序参数(物理时长,与 PWM 频率无关) ---- */
 #define IND_FLASH_ON_MS      200u    /* 单次闪烁亮时长 */
@@ -43,13 +44,13 @@ typedef struct {
     IndState_t  state;          /* 状态机当前状态 */
 } FaultInd_t;
 
-static FaultInd_t s_ctx = { .state = IND_FLASH_ON };
+static FaultInd_t s_ctx = {.state = IND_FLASH_ON,};
 
 /* 单 bit 故障 -> 闪烁次数 = 位号 + 1。
  * 规则:闪 N 次 = bit(N-1),工人可直觉推断,无需背表。
  * 从 single_bit(2的幂)右移数位号,最多 6 次循环(bit6 = OVER_TEMP -> 7 次)。 */
 //比如0b0010，bit1=1,count=2。以此类推bit2=1,count=3
-static uint8_t fault_to_flash_count(uint16_t single_bit)
+static uint8_t MOTOR_SECTION fault_to_flash_count(uint16_t single_bit)
 {
     uint8_t count = 1u;   /* bit0 -> 1 次;single_bit=0 也兜底为 1 次(理论上不发生) */
     while (single_bit > 1u) {
@@ -61,7 +62,7 @@ static uint8_t fault_to_flash_count(uint16_t single_bit)
 
 /* 取 mask 最低置位 bit(单 bit);mask=0 返回 0 */
 //比如0b0110, & 0b1001+1 = 0b0110&0b1010=0b0010
-static uint16_t lowest_set_bit(uint16_t mask)
+static uint16_t MOTOR_SECTION lowest_set_bit(uint16_t mask)
 {
     if (mask == 0u) {
         return 0u;
@@ -76,19 +77,19 @@ static uint16_t lowest_set_bit(uint16_t mask)
  * lowest_set_bit后，就是没有处理的位:bit2。
  */
 
-static uint16_t next_set_bit(uint16_t mask, uint16_t after_bit)
+static uint16_t MOTOR_SECTION next_set_bit(uint16_t mask, uint16_t after_bit)
 {
     uint16_t lowclear = (uint16_t)(after_bit | (after_bit - 1u)); /* after_bit 及其以下全置1 */
     return lowest_set_bit((uint16_t)(mask & (uint16_t)(~lowclear)));
 }
 
-void MCFaultIndicator_Init(void)
+void MOTOR_SECTION MCFaultIndicator_Init(void)
 {
     LED_Off(LED3);
     s_ctx = (FaultInd_t){ .state = IND_FLASH_ON };
 }
 
-void MCFaultIndicator_Tick1ms(void)
+void MOTOR_SECTION MCFaultIndicator_Tick1ms(void)
 {
     uint16_t fault = (uint16_t)MC_GetFault();
 

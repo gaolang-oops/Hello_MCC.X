@@ -7,7 +7,8 @@
 
 ```mermaid
 flowchart TD
-    APP["main.c<br/>应用层：初始化编排 + 分层主循环 + 调试(默认关 #if 0)"]
+    APP["main.c<br/>应用层：初始化编排 + 分层主循环"]
+    TEST["test.c<br/>应用层测试：DAC 正余弦波形验证(50us 时基回调, C/汇编双版本查表分送双 DAC) + 模块测试/基准<br/>TEST_Init · TEST_ModuleRun"]
     PROTO["mc_protocol.c<br/>应用层：UART 协议(故障查询/清故障/边沿推送)<br/>MCProtocol_Init · MCProtocol_PollFault"]
     IND["mc_fault_indicator.c<br/>应用层：故障 LED 编码闪烁(LED3)<br/>MCFaultIndicator_Init · MCFaultIndicator_Tick1ms"]
     BTN["mc_button.c<br/>应用层：按键 UI 输入(非阻塞消抖 1ms)<br/>KEY0 短按→START · KEY1 短按→STOP · KEY2 长按≥2s→清故障<br/>MCButton_Init · MCButton_Tick1ms"]
@@ -18,8 +19,9 @@ flowchart TD
     PWMC["pwm_common.c<br/>PWM 寄存器唯一所有者<br/>PWM_AllOff · PWM_HighOffLowOn · PWM_HighPwmLowOff · PWM_SetPhaseMode · PWM_SetDutyCycle"]
     HALL["hall_speed_fdbk.c<br/>Hall 信号处理(去抖/合法态/变化检测/非法态确认 HALL_INVALID) + 边沿时戳(HALL_TIMEOUT 源) + ResetEdgeTimer<br/>hall_status 唯一 owner · 观察者上抛"]
     MCS["mc_services.c<br/>唯一平台接缝（motor 层仅此 .c include BSP）<br/>时基/工程单位采样/指令输入/Hall/延时/OCP语义 纯转发<br/>★公共头 mc_services.h 含 bsp_freq.h 数值宏(无 BSP 类型)"]
-    MCC["mcc pwm.h / clock.h<br/>寄存器原语 / _XTAL_FREQ"]
+    MCC["mcc pwm.h / clock.h / spi1.h / pin_manager.h<br/>寄存器原语 / _XTAL_FREQ"]
     BSP["Drivers/BSP<br/>bsp_timer · bsp_adc · bsp_ICx · bsp_gpio · bsp_UartLframe"]
+    COMP["Drivers/Components<br/>mcp4922：MCP4922 双通道 12bit DAC 器件驱动(SPI1 Mode3@14MHz + 软件片选 CS1=RA9/CS2=RD8)<br/>MCP4922_Init · MCP4922_WriteAB · MCP4922_WriteQ15AB"]
     FREQ["bsp_freq.c<br/>PWM 频率母参数 + 编译期派生(周期/占空满量程/tick换算)<br/>BSP_FREQ_Verify 启动期对齐 PHASE1"]
 
     APP --> PROTO
@@ -28,6 +30,10 @@ flowchart TD
     APP --> MC
     APP --> BSP
     APP --> FREQ
+    APP --> TEST
+    TEST --> BSP
+    TEST --> COMP
+    COMP --> MCC
     MC --> PWMC
     MC --> SS
     MC --> RAMP
@@ -101,7 +107,7 @@ motor 层唯一直接 include BSP 的文件（`mc_services.c`）。
 |---|---|---|
 | `MC_GetTickMs()` | `BSP_Timer_NowMs()` | TMR3 1ms 自由运行时基（自举计时 / 缓变节拍），16-bit 回卷，消费方用差值 |
 | `MC_GetTick50us()` | `BSP_ADC_TimeBase_GetTick50us()` | ADC 50μs 快时基（与 PWM 同步，供 blanking 判定），16-bit 回卷 |
-| `MC_RegisterTick50us(cb)` | `BSP_ADC_TimeBase_Register50us(cb)` | 注册 50μs ADC ISR 回调（Tier-1 入口，如过流检测） |
+| `MC_RegisterTick50us(cb)` | `BSP_ADC_TimeBase_Register50us(cb)` | 注册 50μs ADC ISR 回调（Tier-1 入口，如过流检测）。多槽共存（各 4 槽），仅初始化期注册，槽满 VERIFY 停机 |
 | `MC_Delay10us(n)` | `BSP_Timer_Delay10us(n)` | 阻塞精确延时（MOSFET 关断裕量）；前置：全局中断已使能 |
 | `MC_US_TO_PWM_TICKS(us)` | `BSP_US_TO_PWM_TICKS(us)` | 微秒->PWM tick 编译期换算宏（1 tick = 1 PWM 周期）；供 blanking 物理时长常量派生，仅限编译期入参 |
 | `MC_GetCurrentIamA/IbmA/IcmA/IbusmA()` | `BSP_ADC_GetCurrentIaMa/IbMa/IcMa/IbusMa()` | 相/母线电流（mA，int16_t 有符号，已减 1.65V 偏置，0=无电流） |
@@ -336,6 +342,7 @@ Hello_MCC.X/
 ├── mc_protocol.c / .h          应用层：UART 故障协议(查询/清除/边沿推送 FAULT_NOTIFY)；注册 RX 回调替代回声
 ├── mc_fault_indicator.c / .h   应用层：故障 LED 编码闪烁(LED3)，闪 N 次=bit(N-1)，1ms 非阻塞状态机
 ├── mc_button.c / .h            应用层：按键 UI 输入(非阻塞消抖 1ms)；KEY0 短按→START / KEY1 短按→STOP / KEY2 长按≥2s→清故障
+├── test.c / .h                 应用层测试：DAC 正余弦波形验证(50us 时基) + 模块测试/基准(自 main.c 迁移)
 ├── user_manager.h              全局段(section)/RAM 宏 + 中断优先级获取宏 + VERIFY 自检
 ├── Architecture.md             本架构文档
 ├── Makefile  /  nbproject/     MPLAB X 工程构建配置（Makefile 由 nbproject 派生）
@@ -376,7 +383,10 @@ Hello_MCC.X/
 │   │   ├── bsp_timer.c / .h    基于 TMR3 的 10μs tick → Delay10us/DelayMs/NowMs 时间戳
 │   │   ├── bsp_UartLframe.c/.h UART 轻量帧协议（帧头 AA55+LEN+DATA+校验和，轮询解析）
 │   │   └── delay.s / delay.h   汇编忙等延时（基于指令周期，不依赖中断，上电阶段可用）
-│   ├── Components/             （空，预留外设组件扩展位）
+│   ├── Components/             器件驱动（外接功能芯片，只依赖 MCC 生成原语）
+│   │   └── mcp4922.c / .h     MCP4922 双通道 12bit DAC：16bit 命令字(高4位配置) + 软件片选时序
+│   │                            SPI1(SDO1=RA4/SCK1=RC3 专用脚, Mode3@14MHz)；CS1=RA9→DAC1, CS2=RD8→DAC2, LDAC 接地
+│   │                            MCP4922_Q15To12：Q1.15(-32768~32767)→12bit 偏置二进制(0~4095, 0→VREF/2)
 │   └── support_dsPIC33E/       器件支持头（寄存器位域定义）
 │       ├── p33EP128MC506.h
 │       └── p33EP128MC506.inc
@@ -398,8 +408,9 @@ Hello_MCC.X/
 |---|---|---|---|
 | `mcc_generated_files/` | 寄存器原语 | 寄存器 | ✗ MCC 重新生成会覆盖 |
 | `Drivers/BSP/` | 硬件适配 | `mcc_generated_files` | ✓（自行维护） |
+| `Drivers/Components/` | 器件驱动 | `mcc_generated_files`（经 SPI1/GPIO 原语） | ✓ |
 | `Middlewares/MotorControl/` | 电机策略 | 仅 `mc_services`（例外：`pwm_common`→`mcc pwm.h`） | ✓ |
-| `main.c` + 根目录 `mc_protocol`/`mc_fault_indicator`/`mc_button` | 应用层 | motor 层 + BSP（应用层可直达 BSP） | ✓ |
+| `main.c` + 根目录 `mc_protocol`/`mc_fault_indicator`/`mc_button`/`test` | 应用层 | motor 层 + BSP + Components（应用层可直达） | ✓ |
 
 > `build/` `debug/` `dist/` `.generated_files/` 为构建产物，不入版本管理关注范围。
 

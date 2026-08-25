@@ -79,16 +79,17 @@
 #include "clock.h"
 #include "system.h"
 #include "system_types.h"
-#include "ic3.h"
-#include "ic2.h"
-#include "ic1.h"
 #include "interrupt_manager.h"
 #include "traps.h"
-#include "cvr.h"
-#include "tmr3.h"
-#include "uart2.h"
-#include "pwm.h"
+#include "spi1.h"
 #include "adc1.h"
+#include "uart2.h"
+#include "ic1.h"
+#include "ic3.h"
+#include "ic2.h"
+#include "tmr3.h"
+#include "cvr.h"
+#include "pwm.h"
 
 void SYSTEM_Initialize(void)
 {
@@ -96,6 +97,7 @@ void SYSTEM_Initialize(void)
     CLOCK_Initialize();
     INTERRUPT_Initialize();
     IC2_Initialize();
+    SPI1_Initialize();
     CVR_Initialize();
     PWM_Initialize();
     UART2_Initialize();

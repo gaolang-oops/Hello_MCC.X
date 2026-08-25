@@ -61,10 +61,10 @@ void PIN_MANAGER_Initialize (void)
     /****************************************************************************
      * Setting the Output Latch SFR(s)
      ***************************************************************************/
-    LATA = 0x0000;
+    LATA = 0x0200;
     LATB = 0x0010;
     LATC = 0x0000;
-    LATD = 0x0000;
+    LATD = 0x0100;
     LATE = 0xF000;
     LATF = 0x0000;
     LATG = 0x0000;
@@ -72,10 +72,10 @@ void PIN_MANAGER_Initialize (void)
     /****************************************************************************
      * Setting the GPIO Direction SFR(s)
      ***************************************************************************/
-    TRISA = 0x1F83;
+    TRISA = 0x1D83;
     TRISB = 0x03EF;
-    TRISC = 0x3FFF;
-    TRISD = 0x0160;
+    TRISC = 0x3FF7;
+    TRISD = 0x0060;
     TRISE = 0x0000;
     TRISF = 0x0003;
     TRISG = 0x03C0;
@@ -112,7 +112,7 @@ void PIN_MANAGER_Initialize (void)
     /****************************************************************************
      * Setting the Analog/Digital Configuration SFR(s)
      ***************************************************************************/
-    ANSELA = 0x1813;
+    ANSELA = 0x1803;
     ANSELB = 0x000F;
     ANSELC = 0x0001;
     ANSELE = 0x0000;
@@ -122,12 +122,12 @@ void PIN_MANAGER_Initialize (void)
      ***************************************************************************/
     __builtin_write_OSCCONL(OSCCON & 0xbf); // unlock PPS
 
-    RPINR7bits.IC1R = 0x0078;    //RG8->IC1:IC1
-    RPINR19bits.U2RXR = 0x0018;    //RA8->UART2:U2RX
-    RPINR12bits.FLT1R = 0x0034;    //RC4->PWM:FLT1
     RPOR1bits.RP36R = 0x0003;    //RB4->UART2:U2TX
-    RPINR7bits.IC2R = 0x0077;    //RG7->IC2:IC2
+    RPINR7bits.IC1R = 0x0078;    //RG8->IC1:IC1
     RPINR8bits.IC3R = 0x0076;    //RG6->IC3:IC3
+    RPINR19bits.U2RXR = 0x0018;    //RA8->UART2:U2RX
+    RPINR7bits.IC2R = 0x0077;    //RG7->IC2:IC2
+    RPINR12bits.FLT1R = 0x0034;    //RC4->PWM:FLT1
 
     __builtin_write_OSCCONL(OSCCON | 0x40); // lock PPS
 }

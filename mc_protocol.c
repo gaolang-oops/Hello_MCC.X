@@ -16,6 +16,7 @@
 #include "Middlewares/MotorControl/motor_control.h"  /* Motor_GetHandle / Motor_State_e */
 #include "Drivers/BSP/bsp_UartLframe.h"  /* UartLframe_Send / RegisterCallback */
 #include <stdlib.h>
+#include "user_manager.h"
 
 /* 上次上报的故障快照,用于 PollFault 边沿检测。
  * 初值 0 = 与 MC_Fault_Init 后的干净态一致,冷启动不误推。 */
@@ -25,7 +26,7 @@ static uint16_t s_last_reported_fault = 0u;
  * 故障字节序为大端(高位在前),便于串口工具直读:
  *   例 OVER_VOLTAGE(0x0002) -> [cmd, 0x00, 0x02, state]
  * 故障位图与状态机状态一帧打包,主机无需二次查询。 */
-static void send_fault_frame(uint8_t cmd)
+static void MOTOR_SECTION send_fault_frame(uint8_t cmd)
 {
     uint16_t fault = (uint16_t)MC_GetFault();
     Motor_Handle_t *m = Motor_GetHandle();
@@ -40,13 +41,14 @@ static void send_fault_frame(uint8_t cmd)
 
 /* RX 回调:按 DATA[0] 命令字节分发。
  * 由 UartLframe_Process 在主循环 Tier-4 调用(非 ISR)。 */
-static void on_rx_frame(const UartLFrame_t *frame)
+static void MOTOR_SECTION on_rx_frame(const UartLFrame_t *frame)
 {
     if (frame == NULL || frame->len < 1u) {
         return;
     }
 
     uint8_t cmd = frame->data[0];
+	//按 DATA[0] 分发故障查询/清故障命令; 
     switch (cmd) {
         case MC_CMD_QUERY_FAULT:
             /* 查询:回当前故障/状态快照 */
@@ -68,13 +70,13 @@ static void on_rx_frame(const UartLFrame_t *frame)
     }
 }
 
-void MCProtocol_Init(void)
+void MOTOR_SECTION MCProtocol_Init(void)
 {
     s_last_reported_fault = 0u;
     UartLframe_RegisterCallback(on_rx_frame);
 }
 
-void MCProtocol_PollFault(void)
+void MOTOR_SECTION MCProtocol_PollFault(void)
 {
     uint16_t cur = (uint16_t)MC_GetFault();
     if (cur != s_last_reported_fault) {

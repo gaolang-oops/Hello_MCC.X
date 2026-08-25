@@ -57,16 +57,18 @@
 #include "Drivers/BSP/bsp_UartLframe.h"
 #include "Drivers/BSP/delay.h"
 
+#include "Drivers/Components/mcp4922.h"
+
 #include "Middlewares/MotorControl/motor_control.h"
 #include "Middlewares/MotorControl/pwm_common.h"
 #include "Middlewares/MotorControl/hall_speed_fdbk.h"
 #include "Middlewares/MotorControl/MC_Fault.h"
 #include "Middlewares/MotorControl/mc_services.h"
-#include "Middlewares/MotorControl/sincos.h"
+
 #include "mc_protocol.h"
 #include "mc_fault_indicator.h"
 #include "mc_button.h"
-
+#include "test.h"
 #include "user_manager.h"
 
 #include <stdio.h>
@@ -74,22 +76,6 @@
 
 /*
  * Main application
- */
-
-#if 0
-/*
- * Hall_DebugPrint
- * 应用层调试：打印当前 Hall 状态。
- * bit2=U, bit1=V, bit0=W
- */
-static void MAIN_SECTION Hall_DebugPrint(void) {
-    uint8_t h = HALL_GetHallStatus();
-    printf("%d:[%d, %d, %d]\n", h, (h >> 2) & 1, (h >> 1) & 1, h & 1);
-}
-#endif
-
-/* UART 帧协议回调现由 mc_protocol 模块注册(MCProtocol_Init),
- * 按 DATA[0] 分发故障查询/清故障命令;未知命令原样回显(向后兼容)。
  */
 
 /*
@@ -132,125 +118,42 @@ static void MAIN_SECTION SelfCheck_Report(void) {
 #endif
 }
 
-/*
- * ModuleTest_Run
- * 模块功能测试与基准：正弦查表正确性(C vs 汇编)、速度对比(示波器测脉宽)。
- * 后期新增模块测试（如 Park/Clarke 变换、PI 调节器）追加到本函数即可。
- */
-static void MAIN_SECTION ModuleTest_Run(void) {
-#if 1 /* 正弦/余弦查表+线性插值验证: C 版 SinCos16 vs 汇编版 SinCos16_Asm(均一次返回 sin+cos)
-         * angle16(UQ0.16) → idx = a16>>9, frac = a16&0x1FF → t[idx] 与 t[idx+1] 两点插值(Q1.15)
-         * cos(θ)=sin(θ+90°): 90°=0x4000 恰为 2 的幂分点 → 索引精确+32(&0x7F 回卷),
-         *                      且 +0x4000 不改变低 9 位 → sin/cos 共享同一 frac
-         * 表上点(frac=0)期望=表值; 非表上点 0x0100/0x0300(frac=256,半步)与
-         * 0xFFFF(frac=511)专测插值+回卷路径, 期望值由宿主端全角度验证脚本给出 */
-    {
-        /* 采样点: 0°/0.5步/1步/1.5步/45°/90°/180°/270°/359.99°(含 idx127→0 回卷) */
-        uint16_t angles[]  = {0x0000, 0x0100, 0x0200, 0x0300, 0x2000, 0x4000, 0x8000, 0xC000, 0xFFFF};
-        int16_t  sin_exp[] = {     0,    804,   1608,   2410,  23170,  32767,      0, -32768,    -4};
-        int16_t  cos_exp[] = { 32767,  32748,  32729,  32669,  23170,      0, -32768,      0, 32766};
-        uint8_t i;
-        uint8_t n = (uint8_t)(sizeof(angles)/sizeof(angles[0]));
-        printf("[SIN] angle16  idx     C_sin     C_cos   Asm_sin   Asm_cos  expect_sin expect_cos  cmp\n");
-        for (i = 0; i < n; i++) {
-            uint16_t a16 = angles[i];
-            SinCos16_Result_t c_res;               /* C 版: sin+cos 一次取回 */
-            SinCos16_Result_t a_res;               /* 汇编版: sin+cos 一次取回 */
-            c_res.u32 = SinCos16(a16);
-            a_res.u32 = SinCos16_Asm(a16);
-#if 1
-            printf("      0x%04X  %3u  %8d  %8d  %8d  %8d  %10d  %10d   %s\n",
-                    a16, (uint16_t)(a16 >> 9), c_res.sc.sin, c_res.sc.cos,
-                    a_res.sc.sin, a_res.sc.cos,
-                    sin_exp[i], cos_exp[i],
-                    (c_res.u32 == a_res.u32 && c_res.sc.sin == sin_exp[i]
-                     && c_res.sc.cos == cos_exp[i]) ? "OK" : "FAIL");
-#endif
-        }
-    }
-#endif
-
-#if 1 /* 速度对比: 用 LED1 脉宽测量 N 次调用总耗时
-       * 示波器探头接 LED1, 单次触发, 会看到三段高电平脉冲:
-       *   第1段 = C 版。第2段 = 汇编版。   第3段 = 空循环(基线)
-       * 单次净耗时 = (脉宽 - 基线脉宽) / N */
-    {
-        uint32_t N = 100000u;
-        volatile uint32_t bench_sink;  /* 汇编版返回 uint32(sin|cos<<16)，原样接住 */
-        uint32_t i;
-
-        INTERRUPT_GlobalDisable();   /* 关中断, 避免中断拉长脉宽 */
-
-        LED_On(LED1);                /* --- C 版 --- */
-        for (i = 0; i < N; i++) bench_sink = SinCos16(0x0300);
-        LED_Off(LED1);
-
-        Delay_ms(5);                 /* 间隔, 便于示波器分段 */
-
-        LED_On(LED1);                /* --- 汇编版(同样 sin+cos 一体) --- */
-        for (i = 0; i < N; i++) bench_sink = SinCos16_Asm(0x0300);
-        LED_Off(LED1);
-
-        Delay_ms(5);
-
-        LED_On(LED1);                /* --- 空循环基线 --- */
-        for (i = 0; i < N; i++) bench_sink = 0;
-        LED_Off(LED1);
-
-        INTERRUPT_GlobalEnable();
-        printf("[BENCH] 示波器测 LED1 三段脉宽(N=%lu/段): C / Asm / empty\n", N);
-        printf("[BENCH] 单次净耗时 = (该段脉宽 - empty脉宽) / %lu\n", N);
-    }
-#endif
-}
-
-/*
- * VofaWave_SendSine
- * 50Hz 正弦波经 UART2 送 VOFA+ 显示(FireWater 文本协议)。
- * 相位累加 + SinCos16 查表,printf("%d\n") 输出 Q1.15 原值
- * 50Hz=0.02s周期=20ms。每1ms执行一次此函数，则最多只能输出20ms/1ms=20个点
- * 20个点均分360度，则相位步进 65536/20=3276.8→3277
- * uint16 累加溢出即 360° 自动回卷。
- * 串口容量：115200 波特 ÷ 10 bit/字节(8N1) = 11.52 KB/s
- * 单帧阻塞 <400μs(printf 经 uart2.c 的 write() 重定向,逐字节阻塞)。
- * VOFA+ 侧:协议选 FireWater,串口 115200-8-N-1,通道0 即正弦
- * (纵轴为 Q1.15 原值,-32768~32767)。
- */
-static void MAIN_SECTION VofaWave_SendSine(void) {
-    static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16) */
-    SinCos16_Result_t r;
-
-    s_phase += 3277u;
-    r.u32 = SinCos16(s_phase);
-    printf("%d\n", r.sc.sin);
-}
-
 int MAIN_SECTION main(void) {
     // initialize the device
     SYSTEM_Initialize();
     INTERRUPT_GlobalDisable();
-    /*1_BSP初始化*/
+
+    /*1_1_BSP初始化*/
     //中断关闭期间，禁用printf，否则会陷入串口阻塞
     GPIO_Configure_LEDS();
     GPIO_Configure_KEYS();
     BSP_Timer_Init();
     BSP_ICx_HW_Init(); /* IC 硬件: GPIO/PPS/ICxCON/IEC */
     BSP_ADC_Int_Register();
+
+	/*1_2_器件初始化*/
+    /* MCP4922 DAC 初始化 + 正余弦波形验证测试（查表在 ADC 中断 50us 时基内执行，
+     * C 版查表→DAC1(CS=RA9)，汇编版查表→DAC2(CS=RD8)，通道A=sin 通道B=cos） */
+    MCP4922_Init();
+
+	/*1_3_测试模块*/
     /* PWM 频率母宏 vs MCC 写入的 PHASE1 寄存器对齐校验。
      * 若 MCC GUI 改了频率却忘了同步 bsp_freq.h,此处 VERIFY 死循环,
      * 调试器原地捕获,杜绝"占空比刻度/时基分频静默失准"的幽灵故障。 */
     BSP_FREQ_Verify();
+	TEST_Init();
+
     /*2_app init*/
     UartLframe_Init();
-    MCProtocol_Init();   /* 注册故障协议 RX 回调(替代原回声回调) */
+    MCProtocol_Init();   /* UART 帧协议回调由 mc_protocol 模块注册。负责上传故障 */
     MCButton_Init();     /* 按键消抖初始化 */
     Motor_Init();   /* 统一编排 motor 层 init：状态机/Ramp/SIXSTEP/HALL/MC_Fault */
     MCFaultIndicator_Init();  /* LED 指示初始化(须在 GPIO_Configure_LEDS 之后) */
+
     /*3_中断使能*/
     INTERRUPT_GlobalEnable();
 
     SelfCheck_Report();   /* 硬件/配置自检报告 */
-    ModuleTest_Run();     /* 模块功能测试/基准 */
 
     //上电初始化，延时500ms。等待模拟信号稳定
     //接下来做电压保护，就不会出现误报故障的情况
@@ -270,13 +173,10 @@ int MAIN_SECTION main(void) {
             MCButton_Tick1ms();
             Motor_Tick();
             MCFaultIndicator_Tick1ms();   /* LED 心跳/故障闪烁 */
-#if 1 /* 调试:50Hz 正弦波送 VOFA+(FireWater 协议) */
-            VofaWave_SendSine();
-#endif
         }
 
         /* ===== Tier-3 监控层(500ms 慢节拍) =====
-         * 主循环存活心跳(LED0):卡死时冻住=告警;与 LED3 故障灯职责分离。 */
+         * 主循环存活心跳(LED0):卡死时冻住=告警 */
         if (BSP_ADC_TimeBase_Is500msFlag()) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);

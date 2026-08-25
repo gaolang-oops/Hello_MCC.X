@@ -12,7 +12,7 @@
 #include "delay.h"
 
 // LED 配置数组
-const GPIO_Config_t GPIO_RAM LED_Config[LED_CNT] = {
+const GPIO_Config_t LED_Config[LED_CNT] = {
     [LED0] =
     {.idx = LED0, .pin_name = "RE12", .tris = &TRISE, .port = &PORTE, .lat = &LATE, .ansel = &ANSELE, .bit_pos = 12, .active_level = 0},
     [LED1] =
@@ -28,7 +28,7 @@ const GPIO_Config_t GPIO_RAM LED_Config[LED_CNT] = {
 // KEY1 -> RC2
 // KEY2 -> RC11
 // 按下 = 低电平 active_level = 0
-const GPIO_Config_t GPIO_RAM KEY_Config[KEY_CNT] = {
+const GPIO_Config_t KEY_Config[KEY_CNT] = {
     [KEY0] =
     {.idx = KEY0, .pin_name = "RC1", .tris = &TRISC, .port = &PORTC, .lat = &LATC, .ansel = &ANSELC, .bit_pos = 1, .active_level = 0},
     [KEY1] =

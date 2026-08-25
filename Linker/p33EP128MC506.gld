@@ -178,6 +178,11 @@ SECTIONS
         *(bsp_section);
   } >program
 
+  components_section :
+  {
+        *(components_section);
+  } >program
+
   /*
   ** User-Defined Constants in Program Memory
   **
@@ -263,20 +268,11 @@ SECTIONS
   .stack 0x1050(NOLOAD):
   {
     __SP_init = .; 
-    . += 0x0400; /*1k Bytes*/
+    . += 0x0800; /*2k Bytes*/
     __SPLIM_init = .; 
     . += 0x0008; 
   } > data
 
-  .core_ram :
-  {
-        *(.core_ram);
-  } >data
-
-  .bsp_ram :
-  {
-        *(.bsp_ram);
-  } >data
   /*
   ** ========== Debug Info ==============
   */

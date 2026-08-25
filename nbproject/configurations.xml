@@ -10,6 +10,8 @@
       <itemPath>mc_protocol.h</itemPath>
       <itemPath>mc_button.c</itemPath>
       <itemPath>mc_button.h</itemPath>
+      <itemPath>test.c</itemPath>
+      <itemPath>test.h</itemPath>
     </logicalFolder>
     <logicalFolder name="f2" displayName="Drivers" projectFiles="true">
       <logicalFolder name="f1" displayName="BSP" projectFiles="true">
@@ -27,6 +29,10 @@
         <itemPath>Drivers/BSP/bsp_timer.c</itemPath>
         <itemPath>Drivers/BSP/bsp_freq.c</itemPath>
         <itemPath>Drivers/BSP/bsp_freq.h</itemPath>
+      </logicalFolder>
+      <logicalFolder name="f3" displayName="Components" projectFiles="true">
+        <itemPath>Drivers/Components/mcp4922.c</itemPath>
+        <itemPath>Drivers/Components/mcp4922.h</itemPath>
       </logicalFolder>
       <logicalFolder name="f2" displayName="Support" projectFiles="true">
         <itemPath>Drivers/support_dsPIC33E/p33EP128MC506.h</itemPath>
@@ -57,6 +63,7 @@
         <itemPath>mcc_generated_files/adc_module_features.h</itemPath>
         <itemPath>mcc_generated_files/adc1.h</itemPath>
         <itemPath>mcc_generated_files/cvr.h</itemPath>
+        <itemPath>mcc_generated_files/spi1.h</itemPath>
       </logicalFolder>
     </logicalFolder>
     <logicalFolder name="SourceFiles" displayName="MCC_Src" projectFiles="true">
@@ -79,6 +86,7 @@
         <itemPath>mcc_generated_files/pwm.c</itemPath>
         <itemPath>mcc_generated_files/adc1.c</itemPath>
         <itemPath>mcc_generated_files/cvr.c</itemPath>
+        <itemPath>mcc_generated_files/spi1.c</itemPath>
       </logicalFolder>
     </logicalFolder>
     <logicalFolder name="f3" displayName="Middlewares" projectFiles="true">

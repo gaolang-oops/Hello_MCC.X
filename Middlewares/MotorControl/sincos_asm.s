@@ -128,9 +128,9 @@ _SinTable:
     ;     平移 +32，逐角度验证与 (sin_idx+32)&0x7F 完全一致
     ;
     ; 寄存器分工：W0=s0→sin  W1=表基址→cos  W2=frac16(共享)
-    ;             W3=字节偏移游标  W4=t[i+1]→delta  W5=地址暂存
-    ;             W6:W7=乘积(取高字 W7)  W8=cos 基值
-    ;
+    ;             W3=字节偏移游标→c1→dc(游标算完 &c1 即死,复用) 
+    ;             W4=t[i+1]→delta→c0  W5=地址暂存
+    ;             W6:W7=乘积(取高字 W7)
     ; 注：TBLPAG 无需保存恢复 —— 它仅影响 TBLRD 指令，C 侧读 .const
     ;     走数据空间 PSV 窗口（PSVPAG），二者互不干扰。
     ;===========================================================
@@ -166,18 +166,19 @@ _SinCos16_Asm:
     add     W0, W7, W0           ; W0 = sin = s0 + (ds×frac16>>16)  (W0 就此定稿)
 
     ; --- 5) cos 通道: 基偏移 +62(=90°字节64-已加2), 同一套插值流程
+    ;    c0 存 W4；W3 游标算完 &c1 即死 → 复用装 c1 再装 dc
     mov     #SINE_COS_BASE_ADJ, W4 ; 62 = 90°字节64 - 游标已加的 2
                                   ; (add.b 立即数仅支持 0~31,故借寄存器,
                                   ;  与原版 mov #64,W4 + add.b 同一手法)
     add.b   W3, W4, W3            ; W3 = (sin_off+2+62) mod 256 = c0 cos 基偏移
-    add     W1, W3, W5           ; W5 = _SinTable<w1> + c0 cos 字节偏移
-    tblrdl  [W5], W8             ; W8 = c0 = _SinTable[cos_idx]
-    add.b   W3, #SINE_STEP_BYTES, W3 ; 游标 +2 → t[c+1] (mod 256 回卷)
-    add     W1, W3, W5			 ; W5 = _SinTable<w1> + c1 cos 字节偏移
-    tblrdl  [W5], W4             ; W4 = c1 = _SinTable[cos_idx+1]
-    sub     W4, W8, W4           ; W4 = dc = c1 - c0 (有符号)
-    mul.us  W2, W4, W6           ; W7:W6 = frac16 × dc
-    add     W8, W7, W1           ; W1 = cos = c0 + (dc×frac16>>16)
+    add     W1, W3, W5            ; W5 = _SinTable<w1> + c0 cos 字节偏移
+    tblrdl  [W5], W4              ; W4 = c0 = _SinTable[cos_idx]
+    add.b   W3, #SINE_STEP_BYTES, W3 ; 游标 +2 → t[c+1] (mod 256 回卷，W3 最后一次作游标)
+    add     W1, W3, W5            ; W5 = _SinTable<w1> + c1 cos 字节偏移
+    tblrdl  [W5], W3              ; W3 = c1 = _SinTable[cos_idx+1] (游标已死,复用)
+    sub     W3, W4, W3            ; W3 = dc = c1 - c0 (有符号)
+    mul.us  W2, W3, W6            ; W7:W6 = frac16 × dc
+    add     W4, W7, W1            ; W1 = cos = c0 + (dc×frac16>>16) (W1 就此定稿)
     return
 
     ; --- 快速路径: 表上点纯查表(即原截断查表版,免 t[i+1]/免乘法)
