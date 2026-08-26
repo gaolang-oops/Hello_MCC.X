@@ -4,7 +4,7 @@
  *
  * Created on August 22, 2026, 3:15 PM
  *
- * 测试模块（应用层）：模块功能测试/基准 + DAC 正余弦波形验证。
+ * 测试模块（应用层）
  * 测试代码集中于此，main.c 只保留初始化与注册调用。
  */
 
@@ -15,12 +15,6 @@
 extern "C" {
 #endif /* __cplusplus */
 
-/*
- * TEST_Init
- * 注册 DAC 波形测试到 ADC 中断 50us 时基（20kHz，与 PWM 同步）。
- * 前置：SYSTEM_Initialize() 与 MCP4922_Init() 已执行。
- * 每次中断：相位累加 → C 版/汇编版查表 → SPI 送双 MCP4922（详见 test.c）。
- */
 void TEST_Init(void);
 
 /*

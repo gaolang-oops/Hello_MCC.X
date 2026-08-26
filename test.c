@@ -16,10 +16,15 @@
 #include "Drivers/BSP/bsp_adc.h"
 #include "Drivers/BSP/delay.h"
 
-#include "Middlewares/MotorControl/sincos.h"
 #include "Drivers/Components/mcp4922.h"
 
+#include "Middlewares/MotorControl/sincos.h"
+#include "Middlewares/MotorControl/spwm.h"
+
 #include <stdio.h>
+
+#define DAC_TEST_FREQ_HZ        50u
+#define DAC_TEST_PHASE_STEP     164u
 
 /* ==================== DAC 正余弦波形验证（50us 时基，ISR 上下文） ====================
  *
@@ -36,10 +41,8 @@
  * ADC中断 @ 20kHz 更新率 50us周期
  * 正余弦波每周期 20000us/50us=400 点，相位步进 = 65536/400 = 163.84 → 164
  * 实际频率 = 20000×164/65536 = 50.049Hz（偏差 0.1%，示波器观察无影响） */
-#define DAC_TEST_FREQ_HZ        50u
-#define DAC_TEST_PHASE_STEP     164u
 
-static void TEST_SECTION DAC_Test_Tick50us(void)
+static void TEST_SECTION DAC_SinCos_Tick50us(void)
 {
     static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16)，uint16 溢出即 360° 回卷 */
     SinCos16_Result_t c_res;             /* C 版: sin+cos 一次取回 */
@@ -56,10 +59,42 @@ static void TEST_SECTION DAC_Test_Tick50us(void)
     MCP4922_WriteQ15AB(MCP4922_DAC2, a_res.sc.sin, a_res.sc.cos);
 }
 
+/* ==================== SPWM 三相正弦 DAC 波形验证（50us 时基，ISR 上下文） ====================
+ *
+ * SPWM_ComputeQ15 输出三相正弦 → SPI → MCP4922 → 示波器手动观察 120° 关系。
+ *
+ * 数据通路（每 50us 一次，20kHz 更新率）：
+ *   相位累加 → SPWM_ComputeQ15 → 4 路 DAC：
+ *     DAC1(CS=RA9)：通道A=Ua  通道B=Ub
+ *     DAC2(CS=RD8)：通道A=Uc  通道B=cos(θ)（相位锚点，便于观察超前/滞后）
+ *
+ * 幅值映射：MCP4922_WriteQ15AB 处理 Q1.15(-32768~32767) → 12bit 偏置二进制(0~4095)，
+ *   0 → 2048(VREF/2)，正负半周以 VREF/2 为零点（DAC 无法输出负电压）。
+ *
+ * 50Hz：每 50us 相位步进 = 65536×50/20000 = 163.84 → 164
+ * 实际频率 = 20000×164/65536 = 50.05Hz（偏差 0.1%，示波器观察无影响） */
+
+static void TEST_SECTION DAC_SPWM_Tick50us(void)
+{
+    static uint16_t s_phase = 0;             /* 相位累加器(UQ0.16)，uint16 溢出即 360° 回卷 */
+    SPWM_UabcQ15_t u;
+    SinCos16_Result_t anchor;
+
+    s_phase += DAC_TEST_PHASE_STEP;
+
+    // u = SPWM_ComputeQ15(s_phase);            /* Ua=sinθ Ub=sin(θ+120°) Uc=sin(θ+240°) */
+    u = Get_Uabc_Q15(s_phase);            /* Ua=cosθ Ub=cos(θ-120°) Uc=cos(θ+120°) */
+	anchor.u32 = SinCos16(s_phase);          /* 相位锚点：cos(θ) 仅供示波器对照 */
+
+    /* 通道A/B 各一帧：DAC1=Ua/Ub，DAC2=Uc/cos */
+    MCP4922_WriteQ15AB(MCP4922_DAC1, u.ua, u.ub);
+    MCP4922_WriteQ15AB(MCP4922_DAC2, u.uc, anchor.sc.cos);
+}
+
 void TEST_SECTION TEST_Init(void)
 {
-    BSP_ADC_TimeBase_Register50us(DAC_Test_Tick50us);
-
+    // BSP_ADC_TimeBase_Register50us(DAC_SinCos_Tick50us);
+    BSP_ADC_TimeBase_Register50us(DAC_SPWM_Tick50us);
 }
 
 #if 0

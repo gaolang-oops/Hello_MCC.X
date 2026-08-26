@@ -108,6 +108,8 @@
         <itemPath>Middlewares/MotorControl/sincos.c</itemPath>
         <itemPath>Middlewares/MotorControl/sincos.h</itemPath>
         <itemPath>Middlewares/MotorControl/sincos_asm.s</itemPath>
+        <itemPath>Middlewares/MotorControl/spwm.h</itemPath>
+        <itemPath>Middlewares/MotorControl/spwm.c</itemPath>
       </logicalFolder>
     </logicalFolder>
     <logicalFolder name="ExternalFiles" displayName="重要文件" projectFiles="true">
