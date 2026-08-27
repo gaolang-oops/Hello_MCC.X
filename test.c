@@ -26,38 +26,6 @@
 #define DAC_TEST_FREQ_HZ        50u
 #define DAC_TEST_PHASE_STEP     164u
 
-/* ==================== DAC 正余弦波形验证（50us 时基，ISR 上下文） ====================
- *
- * 查表函数输出经 SPI→MCP4922 变成模拟量，示波器直观验证算法与驱动。
- *
- * 数据通路（每 50us 一次，20kHz 更新率）：
- *   相位累加 → C 版 SinCos16     → DAC1(CS=RA9)：通道A=正弦 通道B=余弦
- *            → 汇编版 SinCos16_Asm → DAC2(CS=RD8)：通道A=正弦 通道B=余弦
- *
- * 幅值映射：Q1.15(-32768~32767) → 12bit 偏置二进制(0~4095)，
- *   0 → 2048(VREF/2)，正负半周以 VREF/2 为零点（DAC 无法输出负电压）。
- */
-/* 测试 50Hz 正余弦波
- * ADC中断 @ 20kHz 更新率 50us周期
- * 正余弦波每周期 20000us/50us=400 点，相位步进 = 65536/400 = 163.84 → 164
- * 实际频率 = 20000×164/65536 = 50.049Hz（偏差 0.1%，示波器观察无影响） */
-
-static void TEST_SECTION DAC_SinCos_Tick50us(void)
-{
-    static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16)，uint16 溢出即 360° 回卷 */
-    SinCos16_Result_t c_res;             /* C 版: sin+cos 一次取回 */
-    SinCos16_Result_t a_res;             /* 汇编版: sin+cos 一次取回 */
-
-    s_phase += DAC_TEST_PHASE_STEP;
-
-    /* 同一相位分别用两个版本查表，双 DAC 各验一个 */
-    c_res.u32 = SinCos16(s_phase);       /* C 版   → DAC1 */
-    a_res.u32 = SinCos16_Asm(s_phase);   /* 汇编版 → DAC2 */
-
-    /* 通道A=正弦，通道B=余弦 */
-    MCP4922_WriteQ15AB(MCP4922_DAC1, c_res.sc.sin, c_res.sc.cos);
-    MCP4922_WriteQ15AB(MCP4922_DAC2, a_res.sc.sin, a_res.sc.cos);
-}
 
 /* ==================== SPWM 三相正弦 DAC 波形验证（50us 时基，ISR 上下文） ====================
  *
@@ -82,8 +50,7 @@ static void TEST_SECTION DAC_SPWM_Tick50us(void)
 
     s_phase += DAC_TEST_PHASE_STEP;
 
-    // u = SPWM_ComputeQ15(s_phase);            /* Ua=sinθ Ub=sin(θ+120°) Uc=sin(θ+240°) */
-    u = Get_Uabc_Q15(s_phase);            /* Ua=cosθ Ub=cos(θ-120°) Uc=cos(θ+120°) */
+    u = SPWM_ComputeUabcQ15(s_phase);            /* Ua=cosθ Ub=cos(θ-120°) Uc=cos(θ+120°) */
 	anchor.u32 = SinCos16(s_phase);          /* 相位锚点：cos(θ) 仅供示波器对照 */
 
     /* 通道A/B 各一帧：DAC1=Ua/Ub，DAC2=Uc/cos */
@@ -185,5 +152,39 @@ void Hall_DebugPrint(void) {
     uint8_t h = HALL_GetHallStatus();
     printf("%d:[%d, %d, %d]\n", h, (h >> 2) & 1, (h >> 1) & 1, h & 1);
 }
+
+/*  DAC 正余弦波形验证（50us 时基，ISR 上下文）
+ *
+ * 查表函数输出经 SPI→MCP4922 变成模拟量，示波器直观验证算法与驱动。
+ *
+ * 数据通路（每 50us 一次，20kHz 更新率）：
+ *   相位累加 → C 版 SinCos16     → DAC1(CS=RA9)：通道A=正弦 通道B=余弦
+ *            → 汇编版 SinCos16_Asm → DAC2(CS=RD8)：通道A=正弦 通道B=余弦
+ *
+ * 幅值映射：Q1.15(-32768~32767) → 12bit 偏置二进制(0~4095)，
+ *   0 → 2048(VREF/2)，正负半周以 VREF/2 为零点（DAC 无法输出负电压）。
+ */
+/* 测试 50Hz 正余弦波
+ * ADC中断 @ 20kHz 更新率 50us周期
+ * 正余弦波每周期 20000us/50us=400 点，相位步进 = 65536/400 = 163.84 → 164
+ * 实际频率 = 20000×164/65536 = 50.049Hz（偏差 0.1%，示波器观察无影响） */
+
+static void TEST_SECTION DAC_SinCos_Tick50us(void)
+{
+    static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16)，uint16 溢出即 360° 回卷 */
+    SinCos16_Result_t c_res;             /* C 版: sin+cos 一次取回 */
+    SinCos16_Result_t a_res;             /* 汇编版: sin+cos 一次取回 */
+
+    s_phase += DAC_TEST_PHASE_STEP;
+
+    /* 同一相位分别用两个版本查表，双 DAC 各验一个 */
+    c_res.u32 = SinCos16(s_phase);       /* C 版   → DAC1 */
+    a_res.u32 = SinCos16_Asm(s_phase);   /* 汇编版 → DAC2 */
+
+    /* 通道A=正弦，通道B=余弦 */
+    MCP4922_WriteQ15AB(MCP4922_DAC1, c_res.sc.sin, c_res.sc.cos);
+    MCP4922_WriteQ15AB(MCP4922_DAC2, a_res.sc.sin, a_res.sc.cos);
+}
+
 #endif
 

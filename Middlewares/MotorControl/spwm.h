@@ -61,8 +61,8 @@ typedef struct {
    @Returns
      SPWM_UabcQ15_t：ua=sinθ, ub=sin(θ+120°), uc=sin(θ+240°)，各分量 Q1.15。
  */
-SPWM_UabcQ15_t SPWM_ComputeQ15(uint16_t theta16);
-SPWM_UabcQ15_t Get_Uabc_Q15(uint16_t theta16);
+SPWM_UabcQ15_t SPWM_ComputeUabcQ15(uint16_t theta16);
+
 #ifdef __cplusplus
 }
 #endif

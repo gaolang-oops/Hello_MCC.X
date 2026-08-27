@@ -18,24 +18,6 @@
 #include "spwm.h"
 #include "sincos.h"
 
-SPWM_UabcQ15_t SPWM_ComputeQ15(uint16_t theta16) {
-    SPWM_UabcQ15_t u;
-    SinCos16_Result_t r;
-
-    /* Ua = sin(θ)：theta16 低 9 位为插值 frac，直接作为基准相位 */
-    r.u32 = SinCos16(theta16);
-    u.ua = r.sc.sin;
-
-    /* Ub = sin(θ + 120°)：+0x5555 溢出即回卷，无需 mask */
-    r.u32 = SinCos16((uint16_t)(theta16 + SPWM_PHASE_120));
-    u.ub = r.sc.sin;
-
-    /* Uc = sin(θ + 240°)：+0xAAAA 与 -0x5555 等价（补码回卷），即滞后 120° */
-    r.u32 = SinCos16((uint16_t)(theta16 + SPWM_PHASE_240));
-    u.uc = r.sc.sin;
-
-    return u;
-}
 
 #define SPWM_SQRT3DIV2_Q16   56756u   /* √3/2 × 2^16 = 56755.5 → 56756 */
 /*
@@ -44,7 +26,7 @@ SPWM_UabcQ15_t SPWM_ComputeQ15(uint16_t theta16) {
  * Ub = Cos（θ - 120）= -1/2 Cosθ + sqrt(3)/2 Sinθ
  * Uc = Cos（θ + 120）= -1/2 Cosθ - sqrt(3)/2 Sinθ
  */
-SPWM_UabcQ15_t Get_Uabc_Q15(uint16_t theta16) {
+SPWM_UabcQ15_t SPWM_ComputeUabcQ15(uint16_t theta16) {
     SPWM_UabcQ15_t u;
     SinCos16_Result_t r;
     int16_t temp;
