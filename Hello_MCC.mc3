@@ -3912,27 +3912,27 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="dutyCyclePercentage1"/>
-         <value>0 %</value>
+         <value>10 %</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="dutyCyclePercentage2"/>
-         <value>0 %</value>
+         <value>10 %</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="dutyCyclePercentage3"/>
-         <value>0 %</value>
+         <value>10 %</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="periodInSecond1"/>
-         <value>0</value>
+         <value>0.00005</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="periodInSecond2"/>
-         <value>0</value>
+         <value>0.00005</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="periodInSecond3"/>
-         <value>0</value>
+         <value>0.00005</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="PWM" name="pgCustomName1"/>
@@ -6640,15 +6640,15 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.RegisterKey" moduleName="PWM" registerAlias="PDC1"/>
-         <value>0</value>
+         <value>350</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.RegisterKey" moduleName="PWM" registerAlias="PDC2"/>
-         <value>0</value>
+         <value>350</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.RegisterKey" moduleName="PWM" registerAlias="PDC3"/>
-         <value>0</value>
+         <value>350</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.RegisterKey" moduleName="PWM" registerAlias="PHASE1"/>
@@ -7176,15 +7176,15 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="PWM" registerAlias="PDC1" settingAlias="PDC"/>
-         <value>0</value>
+         <value>350</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="PWM" registerAlias="PDC2" settingAlias="PDC"/>
-         <value>0</value>
+         <value>350</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="PWM" registerAlias="PDC3" settingAlias="PDC"/>
-         <value>0</value>
+         <value>350</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="PWM" registerAlias="PHASE1" settingAlias="PHASE"/>
@@ -14962,7 +14962,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files\adc1.h</file>
-         <hash>71965428747aa5ddf8c97c8521764e768ee9391b593d7fcf811d40e8526893ef</hash>
+         <hash>30bfe5f450e514055900b48da66f445323145d38e447215d20e523f2b32641d1</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\adc_module_features.h</file>
@@ -15022,11 +15022,11 @@
       </entry>
       <entry>
          <file>mcc_generated_files\mcc.h</file>
-         <hash>8943d282223b27cc057ed63cb88441883e97e28a925eeee364419c432dcc0324</hash>
+         <hash>9fd03f651982db671103d9704e104708ba0216dc590a96d8301e7f7137f9c533</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\pin_manager.c</file>
-         <hash>771e4eee7635c8f134cfdd2e0072a992074a275acdfb539f4217f34b5d68000e</hash>
+         <hash>9910e3633ff0c7e7c9729ca6eaefe1f08bdbb2fd848cbc85b06f7e142d04345e</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\pin_manager.h</file>
@@ -15034,7 +15034,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files\pwm.c</file>
-         <hash>a410347981f7dd3a1d046c8b32ecf6e434c692ba2553fc6c1c9cf0d41f017824</hash>
+         <hash>d0ae36785004b746cc8d1d3b944a0d60ab61815fcdb3f53c3e89dade77294a61</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\pwm.h</file>
@@ -15066,7 +15066,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files\system.c</file>
-         <hash>6a9980f149e1e2fe4c061d8e1f0e00cf9c23695a55c092e81d5bae1012fff5e6</hash>
+         <hash>0274506b12448a18c26fa5181a567ef0b0af8885027bd60c3d051f533fe04eb1</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\system.h</file>

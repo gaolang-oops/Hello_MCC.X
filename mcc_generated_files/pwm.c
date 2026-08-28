@@ -84,12 +84,12 @@ void PWM_Initialize (void)
     __builtin_write_PWMSFR(&FCLCON2, 0x0B, &PWMKEY);
     //FLTPOL disabled; CLPOL disabled; CLSRC FLT1; CLMOD disabled; FLTMOD Fault input is disabled; FLTSRC FLT2; 
     __builtin_write_PWMSFR(&FCLCON3, 0x0B, &PWMKEY);
-    // PDC1 0; 
-    PDC1 = 0x00;
-    // PDC2 0; 
-    PDC2 = 0x00;
-    // PDC3 0; 
-    PDC3 = 0x00;
+    // PDC1 350; 
+    PDC1 = 0x15E;
+    // PDC2 350; 
+    PDC2 = 0x15E;
+    // PDC3 350; 
+    PDC3 = 0x15E;
     // PHASE1 3500; 
     PHASE1 = 0xDAC;
     // PHASE2 3500; 
