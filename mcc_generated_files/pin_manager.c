@@ -122,12 +122,12 @@ void PIN_MANAGER_Initialize (void)
      ***************************************************************************/
     __builtin_write_OSCCONL(OSCCON & 0xbf); // unlock PPS
 
-    RPOR1bits.RP36R = 0x0003;    //RB4->UART2:U2TX
-    RPINR7bits.IC1R = 0x0078;    //RG8->IC1:IC1
     RPINR8bits.IC3R = 0x0076;    //RG6->IC3:IC3
-    RPINR19bits.U2RXR = 0x0018;    //RA8->UART2:U2RX
     RPINR7bits.IC2R = 0x0077;    //RG7->IC2:IC2
     RPINR12bits.FLT1R = 0x0034;    //RC4->PWM:FLT1
+    RPOR1bits.RP36R = 0x0003;    //RB4->UART2:U2TX
+    RPINR7bits.IC1R = 0x0078;    //RG8->IC1:IC1
+    RPINR19bits.U2RXR = 0x0018;    //RA8->UART2:U2RX
 
     __builtin_write_OSCCONL(OSCCON | 0x40); // lock PPS
 }
