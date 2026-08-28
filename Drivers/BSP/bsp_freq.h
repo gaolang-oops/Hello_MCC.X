@@ -55,8 +55,10 @@ extern "C" {
 #define BSP_PWM_PERIOD_TICKS        ((uint16_t)(2UL * BSP_PWM_PHASE_TICKS))
 
 /* ============ 时基派生(ADC ISR 频率 == PWM 频率) ============
- * ADC 由 PWM1 TRIG1 硬件触发,每 PWM 周期采样一次。
- * 此时 ADC ISR 频率 == PWM 频率,是整个系统的主节拍源。
+ * ADC 由 PWM1 TRIG1 硬件触发。TRIG1 = PHASE1(3500,计数器峰值)时,
+ * 硬件每 PWM 周期产生 2 次比较匹配(上/下行计数在峰值背靠背各一次)。
+ * MCC"触发后分频比 = 2"(TRGDIV=1:2)恰好还原为每周期 1 次触发,
+ * ADC ISR 频率 == PWM 频率(20kHz),是整个系统的主节拍源。
  */
 #define BSP_TICKS_PER_MS            (BSP_PWM_FREQUENCY_HZ / 1000UL)     /* 20: 1ms 含多少 PWM 周期 */
 #define BSP_MS_PER_500MS            500UL                               /* 500ms 含多少 ms */

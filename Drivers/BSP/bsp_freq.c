@@ -6,7 +6,7 @@
  */
 
 #include "bsp_freq.h"
-#include <xc.h>                      /* PHASE1/TRGCON1 SFR */
+#include <xc.h>                      /* PHASE1 SFR */
 #include "../../user_manager.h"      /* VERIFY */
 
 /* BSP_FREQ_Verify —— 在 SYSTEM_Initialize() 后、开中断前调用。

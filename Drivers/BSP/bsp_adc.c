@@ -143,8 +143,8 @@ static void ADC_SECTION ADC_InterruptHandler(void) {
 	static uint32_t s_knobSum = 0;
 	static uint8_t	s_knobIdx = 0;
 	static bool 	s_knobInited = false;
-	
-	//LED_Off(LED1);
+	/* ISR 观测点:LED1 低电平有效,Off=引脚拉高(灭)——进入中断,执行窗起点 */
+	// LED_Off(LED1);   
     /* CH1/CH2/CH3 始终有效 */
     s_adcData.raw_ia = ADC1BUF1;
     s_adcData.raw_ib = ADC1BUF2;
@@ -199,8 +199,10 @@ static void ADC_SECTION ADC_InterruptHandler(void) {
     AD1CHS0 = s_ch0AnMap[s_ch0Slot];
 	//时基
 	BSP_ADC_TimeBase_Tick();
-
-	//LED_On(LED1);
+	/* 退出中断点灯:引脚拉低(亮)。高电平宽=ISR 执行时长,
+	 * 整周期=ISR 周期(50us -> ADC=20kHz)
+	 */
+	//LED_On(LED1);    
 }
 //ADC interrupt function registration
 void ADC_SECTION BSP_ADC_Int_Register(void)

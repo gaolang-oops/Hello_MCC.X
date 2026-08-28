@@ -99,7 +99,7 @@ void PWM_HighPwmLowOff(void) {
 /* SPWM 运行态入口：三相从"上电强制全关"(MCC 配置 IOCON=0xC300)
  * 交还 PWM 模块互补自主控制。
  * 调用约定：
- *   1) 先经 PWM_SetDutyPhase/PWM_SetDutyUvw 置好各相 PDC(默认 0=占空 0%, 交接后为 H 断/L 通)；
+ *   1) 先经 PWM_SetDutyPhase/PWM_SetDuty_UVW 置好各相 PDC(默认 0=占空 0%, 交接后为 H 断/L 通)；
  *   2) 本函数仅切 Override，不碰 PDC/死区/触发；
  *   3) 故障/停机仍走 PWM_AllOff(强制关，优先级高于自主控制)。 */
 void PWM_HandOffToPwm(void) {
