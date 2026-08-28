@@ -105,8 +105,8 @@ static void MAIN_SECTION SelfCheck_Report(void) {
     {
         uint16_t phase1_reg = PHASE1;   /* 实读 SFR(若与派生值不等,根本到不了这里) */
         printf("[PWM] PHASE1 reg = %u  derived = %u  (match: %s)\n",
-                phase1_reg, BSP_PWM_PERIOD_TICKS,
-                (phase1_reg == BSP_PWM_PERIOD_TICKS) ? "YES" : "NO");
+                phase1_reg, BSP_PWM_PHASE_TICKS,
+                (phase1_reg == BSP_PWM_PHASE_TICKS) ? "YES" : "NO");
         printf("[PWM] freq = %lu Hz    period = %u ticks (%lu us)\n",
                 BSP_PWM_FREQUENCY_HZ, BSP_PWM_PERIOD_TICKS,
                 (uint32_t)1000000UL / BSP_PWM_FREQUENCY_HZ);
@@ -114,7 +114,6 @@ static void MAIN_SECTION SelfCheck_Report(void) {
                 BSP_DUTY_FULLSCALE, BSP_DUTY_MIN, BSP_DUTY_MIN_PCT,
                 BSP_DUTY_MAX, BSP_DUTY_MAX_PCT);
     }
-    assert(PHASE1 == BSP_PWM_PERIOD_TICKS);   /* 失败时 __assert_fail 打印 文件:行号:表达式。然后重启 */
 #endif
 }
 

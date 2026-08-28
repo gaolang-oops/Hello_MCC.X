@@ -47,7 +47,7 @@ typedef struct {
 /* 时基源 = ADC ISR(与 PWM 同步触发,频率 = BSP_PWM_FREQUENCY_HZ,见 bsp_freq.h)。
  *   1ms  = BSP_TICKS_PER_MS 个 PWM 周期
  *   500ms = BSP_MS_PER_500MS 个 ms
- * 占空比刻度(满量程/上下限)同样派生自 BSP_PWM_PERIOD_TICKS,见 bsp_freq.h。 */
+ * 占空比刻度(满量程/上下限)派生自 BSP_PWM_PHASE_TICKS。 */
 
 /* 标定常量为 ADC 采样链路的硬件属性 */
 
