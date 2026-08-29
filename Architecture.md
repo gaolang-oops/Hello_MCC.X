@@ -145,7 +145,7 @@ motor 层唯一直接 include BSP 的文件（`mc_services.c`）。
 
 **过流 raw 阈值预计算**（OCP 语义接缝的 BSP 侧）：`MC_OC_Configure(threshold_mA)` 调用时，BSP 用 `ADC_MA_TO_PHASE_RAWDELTA(mA)` / `ADC_MA_TO_IBUS_RAW(mA)`（编译期除法宏）把 mA 阈值反算为 raw 比较值，存静态变量。之后 ISR 热路径 `BSP_ADC_OC_IsPhaseOver` / `IsIbusOver` 仅做 raw 字面量比较（相电流双向 `|raw-512| > delta`，Ibus 单向 `raw > limit`），零运行时换算。未 Configure 前为安全态（永不越限）。
 
-**PWM 频率母参数派生**（`bsp_freq.h`）：全工程只有 `BSP_PWM_FREQUENCY_HZ`（=20000）一个真值源，周期计数/占空满量程/tick 换算全部编译期 `#define` 派生。关键派生：`BSP_PWM_PERIOD_TICKS` = `_XTAL_FREQ / BSP_PWM_FREQUENCY_HZ` = 7000；`BSP_DUTY_FULLSCALE` = `BSP_PWM_PERIOD_TICKS`（=7000，即原 `KNOB_DUTY_FULLSCALE`，已更名迁址）；`BSP_DUTY_MIN/MAX` = 5%/95%（350/6650）；`BSP_TICKS_PER_MS` = 20；`BSP_US_TO_PWM_TICKS(us)` 微秒换算。`BSP_FREQ_Verify()` 启动期断言 MCC 写入的 `PHASE1` == `BSP_PWM_PERIOD_TICKS`，不一致则 VERIFY 死循环。
+**PWM 母参数派生**（`bsp_freq.h`）：全工程只有 `BSP_PWM_FREQUENCY_HZ`（=20000）与 `BSP_PWM_CENTER_ALIGNED`（=1，对齐模式开关：1=中心对齐 CAM=1/ITB=1，0=边沿对齐 CAM=0）两个真值源，PHASE 寄存器计数/周期计数/占空满量程/tick 换算全部编译期 `#define` 派生，公式随对齐开关 `#if/#else` 切换：中心对齐（公式 14-2）`BSP_PWM_PHASE_TICKS` = `_XTAL_FREQ/(2×Fpwm)` = 3500，`BSP_PWM_PERIOD_TICKS` = 2×PHASE = 7000；边沿对齐（公式 14-1）`BSP_PWM_PHASE_TICKS` = `_XTAL_FREQ/Fpwm` = 7000，`BSP_PWM_PERIOD_TICKS` = PHASE。`BSP_DUTY_FULLSCALE` = `BSP_PWM_PHASE_TICKS`（=3500，即原 `KNOB_DUTY_FULLSCALE`，已更名迁址）；`BSP_DUTY_MIN/MAX` = 5%/95%（175/3325，乘法先提升 32 位防溢出）；`BSP_TICKS_PER_MS` = 20；`BSP_US_TO_PWM_TICKS(us)` 微秒换算。`BSP_FREQ_Verify()` 启动期断言 MCC 写入的 `PWMCON1bits.CAM` == `BSP_PWM_CENTER_ALIGNED` 且 `PHASE1` == `BSP_PWM_PHASE_TICKS`，不一致则 VERIFY 死循环。注：ADC 触发依赖中心对齐"峰值双匹配 + TRGDIV=1:2"，切边沿对齐须同步把 MCC 的 TRGDIV 改回 1:1，否则 ADC ISR 频率减半。
 
 ## 五、状态机流转（Motor_Tick 每 1ms 执行）
 
@@ -321,7 +321,7 @@ flowchart TD
 
 ② `state fault hall 6step target_duty/current_duty age_ms`（经 `Motor_GetHandle` 统一句柄）。
 
-开中断后还有一次性 printf（常开）：时钟源 COSC + 系统时钟/指令时钟 + IRQ 优先级报告 + PWM 自检（PHASE1 vs 派生值/频率/占空满量程），并以 `assert(PHASE1 == BSP_PWM_PERIOD_TICKS)` 兜底。
+开中断后还有一次性 printf（常开）：时钟源 COSC + 系统时钟/指令时钟 + IRQ 优先级报告 + PWM 自检（对齐模式/CAM 实读位、PHASE1 vs 派生值、频率/周期/占空满量程），底层由 `BSP_FREQ_Verify()` 的 `VERIFY(CAM/PHASE1 一致)` 兜底（能跑到 printf 说明必然一致）。
 
 ## 十、速度环接缝（预留，未实现）
 

@@ -101,9 +101,12 @@ static void MAIN_SECTION SelfCheck_Report(void) {
             INT_PRIORITY_U2TX, INT_PRIORITY_U2RX, INT_PRIORITY_U2E);
 #endif
 
-#if 1 /* PWM 配置自检报告:BSP 层派生体系(经 BSP_FREQ_Verify 后到此处,PHASE1 必与派生值一致) */
+#if 1 /* PWM 配置自检报告:BSP 层派生体系(经 BSP_FREQ_Verify 后到此处,PHASE1/CAM 必与派生值一致) */
     {
         uint16_t phase1_reg = PHASE1;   /* 实读 SFR(若与派生值不等,根本到不了这里) */
+        printf("[PWM] mode = %s  CAM reg = %u\n",
+                BSP_PWM_CENTER_ALIGNED ? "Center-Aligned" : "Edge-Aligned",
+                PWMCON1bits.CAM);
         printf("[PWM] PHASE1 reg = %u  derived = %u  (match: %s)\n",
                 phase1_reg, BSP_PWM_PHASE_TICKS,
                 (phase1_reg == BSP_PWM_PHASE_TICKS) ? "YES" : "NO");
