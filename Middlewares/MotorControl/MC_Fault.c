@@ -30,7 +30,7 @@
 #include <stdlib.h>
 
 /* ---- 保护策略参数（占位，需台架实测后调整） ---- */
-#define OC_THRESHOLD_MA      2500      /* 过流阈值 2.5A；满量程 ±3A，留 0.5A 线性区裕量 */
+#define OC_THRESHOLD_MA      2500U     /* 过流阈值 2.5A；满量程 ±3A，留 0.5A 线性区裕量 */
 #define MC_BLANKING_US       150U      /* 换相后过流屏蔽期(物理时长,与 PWM 频率解耦) */
 #define BLANKING_TICKS       (MC_US_TO_PWM_TICKS(MC_BLANKING_US))   /* 自动派生:150μs/50μs = 3 */
 

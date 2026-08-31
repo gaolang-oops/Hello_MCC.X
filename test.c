@@ -27,32 +27,6 @@
 #define DAC_TEST_FREQ_HZ        50u
 #define DAC_TEST_PHASE_STEP     164u
 
-/* SPWM-PWM 互补输出正弦规律脉冲波测试
- * 旋钮 = 速度/调制度指令（5% 死区归零，满拧 ≈ 95%，已滤波）；
- * 占空幅值 = target_duty/2，围绕 50% 中点摆动
- * 旋钮归零 = 三相占空恒 50% 共模，零差压零输出（桥正常开关，非下管常通）
- */
-void TEST_SECTION PWM_SPWM_DUTY_Check(void)
-{
-    static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16)，uint16 溢出即 360° 回卷 */
-    SPWM_DutyUVW_t uvw_duty;
-	uint16_t speed_uq16 = MC_GetKnobSpeed();
-	/* 目标速度->目标占空比
-	 * 反归一化 —— /65536 × PWM周期 */
-	uint16_t target_duty = __builtin_muluu(speed_uq16, MC_DUTY_FULLSCALE) >> 16;
-    s_phase += DAC_TEST_PHASE_STEP;
-    uvw_duty = SPWM_Duty_UVW(s_phase, target_duty);
-    PWM_SetDuty_UVW(uvw_duty.u, uvw_duty.v, uvw_duty.w);
-}
-
-void TEST_SECTION TEST_Init(void)
-{
-    // BSP_ADC_TimeBase_Register50us(DAC_SinCos_Tick50us);
-    // BSP_ADC_TimeBase_Register50us(DAC_SPWM_Tick50us);
-	PWM_SetDuty_UVW(0,0,0);
-    PWM_HandOffToPwm();                      /* 三相交还 PWM 互补自主控制 */
-}
-
 #if 0
 void TEST_ModuleRun(void) {
 #if 1 /* 正弦/余弦查表+线性插值验证: C 版 SinCos16 vs 汇编版 SinCos16_Asm(均一次返回 sin+cos)
@@ -205,6 +179,31 @@ static void TEST_SECTION DAC_SPWM_Tick50us(void)
     MCP4922_WriteQ15AB(MCP4922_DAC1, u.ua, u.ub);
     MCP4922_WriteQ15AB(MCP4922_DAC2, u.uc, anchor.sc.cos);
 }
-
 #endif
+
+/* SPWM-PWM 互补输出正弦规律脉冲波测试
+ * 旋钮 = 速度/调制度指令（5% 死区归零，满拧 ≈ 95%，已滤波）；
+ * 占空幅值 = target_duty/2，围绕 50% 中点摆动
+ * 旋钮归零 = 三相占空恒 50% 共模，零差压零输出（桥正常开关，非下管常通）
+ */
+void TEST_SECTION PWM_SPWM_DUTY_Check(void)
+{
+    static uint16_t s_phase = 0;         /* 相位累加器(UQ0.16)，uint16 溢出即 360° 回卷 */
+    SPWM_DutyUVW_t uvw_duty;
+	uint16_t speed_uq16 = MC_GetKnobSpeed();
+	/* 目标速度->目标占空比
+	 * 反归一化 —— /65536 × PWM周期 */
+	uint16_t target_duty = __builtin_muluu(speed_uq16, MC_DUTY_FULLSCALE) >> 16;
+    s_phase += DAC_TEST_PHASE_STEP;
+    uvw_duty = SPWM_Duty_UVW(s_phase, target_duty);
+    PWM_SetDuty_UVW(uvw_duty.u, uvw_duty.v, uvw_duty.w);
+}
+
+void TEST_SECTION TEST_Init(void)
+{
+    // MC_RegisterTick50us(DAC_SinCos_Tick50us);
+    // MC_RegisterTick50us(DAC_SPWM_Tick50us);
+	PWM_SetDuty_UVW(0,0,0);
+    PWM_HandOffToPwm();                      /* 三相交还 PWM 互补自主控制 */
+}
 
