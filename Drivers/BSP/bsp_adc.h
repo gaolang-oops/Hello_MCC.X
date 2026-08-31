@@ -34,6 +34,7 @@
 #include <xc.h> // include processor files - each processor file is guarded.
 #include <stdbool.h>
 #include "bsp_freq.h"   /* PWM 母参数 + 时基/占空比派生宏(BSP_TICKS_PER_MS / BSP_DUTY_* / BSP_MS_PER_500MS) */
+
 typedef struct {
     uint16_t raw_ia; /* AN0 → CH1 → BUF1 */
     uint16_t raw_ib; /* AN1 → CH2 → BUF2 */
@@ -124,7 +125,7 @@ void BSP_ADC_TimeBase_Register50us(ADC_TimeBase_Callback_t cb);
 void BSP_ADC_TimeBase_Register1ms(ADC_TimeBase_Callback_t cb);
 
 
-uint16_t BSP_ADC_KnobToDuty(void); 
+uint16_t BSP_ADC_Knob_Value(void);
 uint16_t BSP_ADC_GetVbusMv(void);
 
 /* 相电流/母线电流（mA，有符号）。

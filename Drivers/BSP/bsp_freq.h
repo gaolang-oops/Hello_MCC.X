@@ -27,6 +27,8 @@
 #include <stdint.h>
 #include "clock.h"   /* _XTAL_FREQ(MCC 提供,Fosc)——周期值派生自它 */
 
+#include "bsp_macro.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -97,26 +99,27 @@ extern "C" {
 #define BSP_TICKS_PER_MS            (BSP_PWM_FREQUENCY_HZ / 1000UL)     /* 20: 1ms 含多少 PWM 周期 */
 #define BSP_MS_PER_500MS            500UL                               /* 500ms 含多少 ms */
 
-/* ============ 占空比刻度派生(满量程 = PHASE 寄存器值) ============
- * 中心对齐下占空比 = PDCx / PHASEx,3500 = 100%。
- * MIN/MAX 留电机启动死区(下限)与死区时间余量(上限)。
- *
- * !! 16 位溢出防护 !!
- *   XC16 的 int/unsigned 都是 16 位。BSP_DUTY_FULLSCALE × BSP_DUTY_MAX_PCT
- *   = 3500 × 95 = 332500 > 65535,直接乘会溢出。
- *   必须先 (uint32_t) 提升到 32 位再乘,最后 cast 回 uint16_t。
- *   编译期常量折叠,无运行时开销。
- */
-#define BSP_DUTY_FULLSCALE          (BSP_PWM_PHASE_TICKS)               /* 3500: 100%*/
-#define BSP_DUTY_MIN_PCT            5U                                  /* 占空下限百分比 */
-#define BSP_DUTY_MAX_PCT            95U                                 /* 占空上限百分比 */
-#define BSP_DUTY_MIN                ((uint16_t)(((uint32_t)BSP_DUTY_FULLSCALE * BSP_DUTY_MIN_PCT) / 100U))
-#define BSP_DUTY_MAX                ((uint16_t)(((uint32_t)BSP_DUTY_FULLSCALE * BSP_DUTY_MAX_PCT) / 100U))
-
 /* ============ 死区(MCC 侧配置) ============
  * 中心对齐互补模式下死区仅由 ALTDTRx 插入,DTRx 不参与(MCC 写 0)。
  * 死区分辨率 = TOSC = 1/Fosc;MCC 配置 ALTDTR = 280 -> 280/140MHz = 2.0us。
  */
+ /*
+ * !! 16 位溢出防护 !!
+ *   XC16 的 int/unsigned 都是 16 位。2us × _XTAL_FREQ
+ *   = 2 × 1,40,000,000 > 65535,直接乘会溢出。
+ *   必须先 (uint32_t) 提升到 32 位再乘,最后 cast 回 uint16_t。
+ *   编译期常量折叠,无运行时开销。
+ */
+#define BSP_DUTY_DEADTIME_US         2U
+#define BSP_DUTY_DEADTIME_TICKS      ((uint16_t)((uint32_t)BSP_DUTY_DEADTIME_US * (_XTAL_FREQ) / 1000000UL))
+
+// ============ 占空比刻度派生(满量程 = PHASE 寄存器值) ============
+//中心对齐下占空比 = PDCx / PHASEx,3500 = 100%。
+#define BSP_DUTY_FULLSCALE          (BSP_PWM_PHASE_TICKS)
+//MIN/MAX 留电机启动死区(下限)与死区时间余量(上限)。
+#define BSP_DUTY_MIN                (BSP_DUTY_DEADTIME_TICKS)
+#define BSP_DUTY_MAX                (BSP_DUTY_FULLSCALE - BSP_DUTY_DEADTIME_TICKS)
+#define BSP_DUTY_CLAMP(val)    		CLAMP_U16(val, BSP_DUTY_MIN, BSP_DUTY_MAX)
 
 /* ============ 物理时长 → PWM tick 换算 ============
  * 供上层声明"我需要 X μs"的快保护/时序常量。

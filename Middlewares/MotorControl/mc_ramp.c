@@ -3,7 +3,7 @@
  *
  * 占空比缓变模块实现
  * 职责：纯软件缓变策略，不碰寄存器。
- *      目标值来自 mc_services（旋钮），硬件写入经 pwm_common。
+ *      目标速度来自 mc_services（旋钮/速度环），换算为占空比域缓变；
  */
 
 #include "mc_ramp.h"
@@ -19,14 +19,14 @@ static Ramp_Handle_t s_ramp = {
 };
 
 /* 目标占空比来源（速度环接缝）：默认旋钮直驱，可经 SetTargetProvider 切换 */
-static Ramp_TargetProvider_t s_target_provider = MC_GetKnobDuty;
+static Ramp_TargetProvider_t s_target_provider = MC_GetKnobSpeed;
 
 void MC_Ramp_Init(void)
 {
     s_ramp.target_duty  = 0;
     s_ramp.current_duty = 0;
     s_ramp.last_tick_ms = MC_GetTickMs();
-    s_target_provider   = MC_GetKnobDuty;   /* 复位为默认旋钮直驱 */
+    s_target_provider   = MC_GetKnobSpeed;   /* 复位为默认旋钮直驱 */
     PWM_SetDutyCycle(0);   /* 同步硬件 */
 }
 
@@ -57,7 +57,11 @@ void MC_Ramp_ForceZero(void)
  */
 void MC_Ramp_Step(void)
 {
-    s_ramp.target_duty = s_target_provider();   /* 经 provider：旋钮直驱 / 速度环输出 */
+	uint16_t speed_uq16 = s_target_provider();   /* 经 provider：旋钮直驱 / 速度环输出 */
+
+	/* 目标速度->目标占空比
+	 * 反归一化 —— /65536 × PWM周期 */
+	s_ramp.target_duty = __builtin_muluu(speed_uq16, MC_DUTY_FULLSCALE) >> 16;
 
     uint16_t now = MC_GetTickMs();
     if ((now - s_ramp.last_tick_ms) < s_ramp.ramp_period_ms)
@@ -75,7 +79,6 @@ void MC_Ramp_Step(void)
     uint16_t next = (gap > 0) ?
         (uint16_t)(s_ramp.current_duty + step) :
         (uint16_t)(s_ramp.current_duty - step);
-
     PWM_SetDutyCycle(next);
     s_ramp.current_duty = next;
 }

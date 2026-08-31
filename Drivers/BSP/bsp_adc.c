@@ -218,17 +218,12 @@ const volatile ADC_Data_t * ADC_SECTION BSP_ADC_GetData(void)
     return &s_adcData;
 }
 
-uint16_t ADC_SECTION BSP_ADC_KnobToDuty(void)
+uint16_t ADC_SECTION BSP_ADC_Knob_Value(void)
 {
-    /* 步骤1: 归一化为 UQ0.16 —— 16位无符号定点, 表示 [0, 1) 比例
+    /* 归一化为 UQ0.16 —— 16位无符号定点, 表示 [0, 1) 比例
      *        flt_knob<<6 == flt_knob/1024 × 65536, 把ADC读数映射到 [0,1) */
-    uint16_t norm_uq0_16 = s_adcData.flt_knob << 6;
-    /* 步骤2: 反归一化 —— norm/65536 × PWM周期 */
-	uint16_t duty = __builtin_muluu(norm_uq0_16, BSP_DUTY_FULLSCALE) >> 16;
-    /* 步骤3: 限幅 [BSP_DUTY_MIN, BSP_DUTY_MAX] */
-    if (duty < BSP_DUTY_MIN) duty = 0;
-    if (duty > BSP_DUTY_MAX) duty = BSP_DUTY_MAX;
-    return duty;
+    return s_adcData.flt_knob << 6;
+
 }
 
 uint16_t ADC_SECTION BSP_ADC_GetVbusMv(void)

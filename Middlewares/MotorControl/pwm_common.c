@@ -18,17 +18,17 @@ void PWM_SetDutyCycle(uint16_t duty) {
     PWM_DutyCycleSet(PWM_GENERATOR_3, duty);
 }
 
-/* 单相写占空比（SPWM 每相独立调制）。满量程 = BSP_DUTY_FULLSCALE = PHASE(3500) = 100%。 */
+/* 单相写占空比（SPWM 每相独立调制）。满量程 = PHASE(3500) = 100%。 */
 void PWM_SetDutyPhase(PWM_GENERATOR gen, uint16_t duty) {
     PWM_DutyCycleSet(gen, duty);
 }
 
 /* 三相同步写占空比：PDCx 双缓冲、IUE=0，同一 ISR 内三写
  * 在同一 PWM 周期边界同步生效，天然保持三相 SPWM 对称性。 */
-void PWM_SetDuty_UVW(uint16_t du, uint16_t dv, uint16_t dw) {
-    PWM_DutyCycleSet(PWM_GENERATOR_1, du);
-    PWM_DutyCycleSet(PWM_GENERATOR_2, dv);
-    PWM_DutyCycleSet(PWM_GENERATOR_3, dw);
+void PWM_SetDuty_UVW(uint16_t duty_u, uint16_t duty_v, uint16_t duty_w) {
+    PWM_DutyCycleSet(PWM_GENERATOR_1, duty_u);
+    PWM_DutyCycleSet(PWM_GENERATOR_2, duty_v);
+    PWM_DutyCycleSet(PWM_GENERATOR_3, duty_w);
 }
 
 /* ---- PWMC 核心原语（PWM 寄存器唯一所有者）---- */

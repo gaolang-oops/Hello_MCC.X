@@ -46,6 +46,12 @@ typedef struct {
     int16_t uc;   /* W 相：sin(θ + 240°)      */
 } SPWM_UabcQ15_t;
 
+/* 三相 SPWM 占空比（调用方可直接写 PDC） */
+typedef struct {
+    uint16_t u;   /* U 相占空比 */
+    uint16_t v;   /* V 相占空比 */
+    uint16_t w;   /* W 相占空比 */
+} SPWM_DutyUVW_t;
 /**
    @Summary
      由电角度 theta16 计算三相正弦电压 Ua/Ub/Uc（Q1.15）。
@@ -62,6 +68,30 @@ typedef struct {
      SPWM_UabcQ15_t：ua=sinθ, ub=sin(θ+120°), uc=sin(θ+240°)，各分量 Q1.15。
  */
 SPWM_UabcQ15_t SPWM_ComputeUabcQ15(uint16_t theta16);
+
+/**
+   @Summary
+     target_duty + 电角度 → 三相 SPWM 占空比（纯映射，无时基/硬件依赖）。
+
+   @Description
+     bipolar SPWM：duty = 满量程/2 + (target_duty × 相正弦) >> 16。
+     调制中点为死值（MC_DUTY_FULLSCALE 的一半，50% 占空），不随 target_duty 变化：
+       相正弦=0  → 三相恒 50% 共模，零差压零输出
+       相正弦=±1 → 中点 ± target_duty/2（占空幅值 = target_duty/2）
+     输出经 MC_DUTY_CLAMP 饱和到 [MC_DUTY_MIN, MC_DUTY_MAX]，
+     调制深度 > 84% 后正弦峰触界削顶；负半周由互补桥 L 管自动承载。
+     	死区280，故满量程最大：3500-280=3220; 3220/3500=92%
+     	波形中心在 50%[1750]，所以波峰爬到天花板只需再涨 3220-1750=1470 个点 → 调制范围就是1470*2=2940
+     	2940/3500=84%  即84%就开始削顶。MIN 侧同理（(1750−280)/1750 = 84%，上下对称）。
+
+   @Parameters
+     theta16      电角度（brad16：0~65535 ⇔ 0°~360°）
+     target_duty  幅值指令（PWM ticks ≤ MC_DUTY_FULLSCALE，  0 = 恒 50% 共模零输出）
+
+   @Returns
+     SPWM_DutyUVW_t：三相占空比。
+ */
+SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty);
 
 #ifdef __cplusplus
 }

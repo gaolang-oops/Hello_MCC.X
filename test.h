@@ -26,6 +26,7 @@ void TEST_Init(void);
  */
 void TEST_ModuleRun(void);
 
+void PWM_SPWM_DUTY_Check(void);
 
 #ifdef	__cplusplus
 }

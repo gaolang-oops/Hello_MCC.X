@@ -29,6 +29,7 @@
         <itemPath>Drivers/BSP/bsp_timer.c</itemPath>
         <itemPath>Drivers/BSP/bsp_freq.c</itemPath>
         <itemPath>Drivers/BSP/bsp_freq.h</itemPath>
+        <itemPath>Drivers/BSP/bsp_macro.h</itemPath>
       </logicalFolder>
       <logicalFolder name="f3" displayName="Components" projectFiles="true">
         <itemPath>Drivers/Components/mcp4922.c</itemPath>

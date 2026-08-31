@@ -137,7 +137,7 @@ void Motor_Tick(void) {
             /* 就绪：PWM 使能，自举已充，等旋钮指令。
              * 旋钮>0 → RUNNING
              * 超时30s且旋钮=0 → STOPPED */
-            if (MC_GetKnobDuty() > 0) {
+            if (MC_GetKnobSpeed() > 0) {
             	/* 重置霍尔边沿计时基准:把 HALL_TIMEOUT 窗口从"进入运行"起算,
                  * 防长时间停机后重启时旧时戳导致首个 RUNNING 拍误报 HALL_TIMEOUT。 */
             	HALL_ResetEdgeTimer();
@@ -155,7 +155,7 @@ void Motor_Tick(void) {
             /* CMD_STOP 已在顶部预分流硬停 → STOPPED（立即关 PWM）。
              * 旋钮归零缓停 → READY 待速（区别于 KEY1 的硬停彻底停）。 */
 			MC_Ramp_Step();
-			if (MC_GetKnobDuty() == 0 && MC_Ramp_GetCurrentDuty() == 0) {
+			if (MC_GetKnobSpeed() == 0 && MC_Ramp_GetCurrentDuty() == 0) {
 				/* 缓停完毕：回到ready */
                 s_ready_ms = 0;
                 s_motor_state = MOTOR_STATE_READY;

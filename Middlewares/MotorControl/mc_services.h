@@ -24,12 +24,18 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../Drivers/BSP/bsp_freq.h"   /* PWM 母参数派生的数值宏(BSP_TICKS_PER_MS / BSP_US_TO_PWM_TICKS 等)。
-                                           * 本头仅含数值宏,无 BSP 类型,不破坏"不暴露 BSP 类型"原则。
-                                           * motor 层经此接缝获取,不直接 include Drivers/BSP。 */
+#include "../../Drivers/BSP/bsp_freq.h"   /* PWM 母参数派生数值宏（全工程唯一真值源：
+                                           * 改频率/PHASE 只动 BSP 一处，MC_* 自动跟随）。
+                                           * 接缝规则：motor 层模块只 include 本头，
+                                           * 不直接 include Drivers/BSP。 */
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* ==== PWM 数值宏（转发 BSP 派生值，motor 层唯一获取口）==== */
+#define MC_DUTY_FULLSCALE		BSP_DUTY_FULLSCALE   /* 满量程 = PHASE ticks */
+#define MC_DUTY_MIN				BSP_DUTY_MIN
+#define MC_DUTY_MAX				BSP_DUTY_MAX
+#define MC_DUTY_CLAMP(val)		BSP_DUTY_CLAMP(val)  /* 无符号限幅（入参为 uint16 占空） */
 
 /* ============ 时基 ============ */
 
@@ -50,7 +56,7 @@ void MC_Delay10us(uint16_t n);
 /* 微秒 → 快时基 tick 数(与 MC_GetTick50us 同源,1 tick = 1 个 PWM 周期)。
  * 供 blanking/采样窗等"物理时长 → tick"换算。
  * !! 仅限编译期常量入参 —— 否则 /1000000 会引入运行时除法。
- *    编译期入参时整个表达式常量折叠,零运行时开销(详见 bsp_freq.h)。 */
+ *    编译期入参时整个表达式常量折叠,零运行时开销。 */
 #define MC_US_TO_PWM_TICKS(us)   BSP_US_TO_PWM_TICKS(us)
 
 /* ============ 工程单位采样值 ============
@@ -75,9 +81,8 @@ bool MC_OC_IsIbusOver(void);
 uint16_t MC_GetVbusMv(void);
 
 /* ============ 指令输入 ============ */
-
-/* 读旋钮请求值并映射为占空比指令（电机启停/缓变的目标值来源）*/
-uint16_t MC_GetKnobDuty(void);
+/* 读旋钮请求值转换为目标速度UQ16：0%~95%（电机启停/缓变的目标值来源）*/
+uint16_t MC_GetKnobSpeed(void);
 
 /* ============ Hall ============ */
 

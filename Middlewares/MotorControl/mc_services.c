@@ -12,8 +12,22 @@
 
 #include "mc_services.h"
 #include "../../Drivers/BSP/bsp_adc.h"
+#include "../../Drivers/BSP/bsp_freq.h"
 #include "../../Drivers/BSP/bsp_timer.h"
 #include "../../Drivers/BSP/bsp_ICx.h"
+
+#define MC_SPEED_MIN_UQ16           3277u //3277/65536=0.05 ~ 5%
+#define MC_SPEED_MAX_UQ16			62259u //62259/65536=0.9499969 ~ 95%
+
+uint16_t MC_GetKnobSpeed(void) {
+	//knob：旋钮值UQ0.16 [0,1) 
+	uint16_t norm_uq0_16 = BSP_ADC_Knob_Value();
+	/* 限幅 [SPEED_MIN, SPEED_MAX] */
+    if (norm_uq0_16 < MC_SPEED_MIN_UQ16) norm_uq0_16 = 0;
+    if (norm_uq0_16 > MC_SPEED_MAX_UQ16) norm_uq0_16 = MC_SPEED_MAX_UQ16;
+
+	return norm_uq0_16;
+}
 
 uint16_t MC_GetTickMs(void) {
     return BSP_Timer_NowMs();
@@ -44,10 +58,6 @@ bool MC_OC_IsIbusOver(void)                 { return BSP_ADC_OC_IsIbusOver(); }
 
 uint16_t MC_GetVbusMv(void) {
     return BSP_ADC_GetVbusMv();
-}
-
-uint16_t MC_GetKnobDuty(void) {
-    return BSP_ADC_KnobToDuty();
 }
 
 uint8_t MC_Hall_ReadStatus(void) {

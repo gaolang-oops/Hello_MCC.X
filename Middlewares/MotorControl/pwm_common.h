@@ -48,13 +48,13 @@ typedef enum {
 /* 三相同步写占空比到硬件（纯寄存器操作，不维护软件影子） */
 void PWM_SetDutyCycle(uint16_t duty);
 
-/* 单相写占空比（SPWM 每相独立调制用）。duty 满量程 = BSP_DUTY_FULLSCALE(PHASE=3500)。 */
+/* 单相写占空比（SPWM 每相独立调制用）。duty 满量程 = PHASE(3500)。 */
 void PWM_SetDutyPhase(PWM_GENERATOR gen, uint16_t duty);
 
 /* 三相同步写占空比（SPWM 调制节拍用）。
  * PDCx 双缓冲且 IUE=0，同一 ISR 内连续三写 -> 三相同一周期边界同步生效。 
  */
-void PWM_SetDuty_UVW(uint16_t du, uint16_t dv, uint16_t dw);
+void PWM_SetDuty_UVW(uint16_t duty_u, uint16_t duty_v, uint16_t duty_w);
 
 /* ---- PWMC 核心原语（本层为 PWM 寄存器唯一所有者，单一职责：只碰寄存器）---- */
 void PWM_SetPhaseMode(PWM_GENERATOR gen, PWM_PhaseMode_t mode); /* 单相 Override 唯一入口 */

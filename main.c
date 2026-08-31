@@ -113,9 +113,8 @@ static void MAIN_SECTION SelfCheck_Report(void) {
         printf("[PWM] freq = %lu Hz    period = %u ticks (%lu us)\n",
                 BSP_PWM_FREQUENCY_HZ, BSP_PWM_PERIOD_TICKS,
                 (uint32_t)1000000UL / BSP_PWM_FREQUENCY_HZ);
-        printf("[PWM] duty fullscale = %u   min = %u (%u%%)   max = %u (%u%%)\n",
-                BSP_DUTY_FULLSCALE, BSP_DUTY_MIN, BSP_DUTY_MIN_PCT,
-                BSP_DUTY_MAX, BSP_DUTY_MAX_PCT);
+        printf("[PWM] duty fullscale = %u  min = %u  max = %u\n",
+                BSP_DUTY_FULLSCALE, BSP_DUTY_MIN, BSP_DUTY_MAX);
     }
 #endif
 }
@@ -149,7 +148,9 @@ int MAIN_SECTION main(void) {
     UartLframe_Init();
     MCProtocol_Init();   /* UART 帧协议回调由 mc_protocol 模块注册。负责上传故障 */
     MCButton_Init();     /* 按键消抖初始化 */
+	#if 0 //test
     Motor_Init();   /* 统一编排 motor 层 init：状态机/Ramp/SIXSTEP/HALL/MC_Fault */
+	#endif
     MCFaultIndicator_Init();  /* LED 指示初始化(须在 GPIO_Configure_LEDS 之后) */
 
     /*3_中断使能*/
@@ -160,7 +161,7 @@ int MAIN_SECTION main(void) {
     //上电初始化，延时500ms。等待模拟信号稳定
     //接下来做电压保护，就不会出现误报故障的情况
     Delay_ms(500);
-
+	uint8_t cnt = 0;
     while (1) {
         /* ===== Tier-4 事件驱动(无固定节拍,每轮跑) =====
          * UART 帧解析,收到上位机信息触发回调处理[无任务时迅速空转回到 Tier-2 检查] */
@@ -173,8 +174,16 @@ int MAIN_SECTION main(void) {
         if (BSP_ADC_TimeBase_Is1msFlag()) {
             BSP_ADC_TimeBase_Clear1msFlag();
             MCButton_Tick1ms();
+			#if 0 //test
             Motor_Tick();
+			#endif
             MCFaultIndicator_Tick1ms();   /* LED 心跳/故障闪烁 */
+			cnt++;
+			if(cnt>50) {
+				cnt = 0;
+				PWM_SPWM_DUTY_Check();
+			}
+
         }
 
         /* ===== Tier-3 监控层(500ms 慢节拍) =====
@@ -182,6 +191,7 @@ int MAIN_SECTION main(void) {
         if (BSP_ADC_TimeBase_Is500msFlag()) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
+
 #if 0 /* 调试块:打印采样/状态,节拍已固定 500ms */
             {
                 Motor_Handle_t *m = Motor_GetHandle();
