@@ -41,7 +41,7 @@ Hello_MCC.X/
 ├── mcc_generated_files/        MCC 生成的外设驱动（勿手改）
 ├── Drivers/BSP/                板级支持包（工程单位换算在此完成）
 │   ├── bsp_adc.c/.h            ADC ISR + raw→mA/mV/duty 换算
-│   ├── bsp_freq.c/.h           ★ PWM 频率母参数 + 编译期派生
+│   ├── bsp_freq.h              ★ PWM 频率母参数 + 编译期派生（纯头文件，自检内联 main.c）
 │   ├── bsp_ICx.c/.h            Hall 输入捕捉 + IC ISR 桥
 │   ├── bsp_timer.c/.h          基于 TMR3 的 10μs 时基
 │   └── bsp_UartLframe.c/.h     UART 轻量帧协议
