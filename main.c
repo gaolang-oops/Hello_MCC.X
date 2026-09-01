@@ -79,51 +79,101 @@
  */
 
 /*
- * SelfCheck_Report
- * 上电硬件/配置自检报告：时钟源、中断优先级、PWM 派生体系校验。
- * 须在中断全局使能后调用（printf 依赖串口收发）。
+ * SelfCheck_Report 上电硬件/配置自检报告：
+ * 频率检测 + 时钟源、中断优先级、PWM 派生体系、驱动模式配对。
  */
-static void MAIN_SECTION SelfCheck_Report(void) {
+static void MAIN_SECTION SelfCheck_Report(void)
+{
     /* 查看当前时钟源: 000=FRC, 011=PRI+PLL(外部晶振+PLL) */
     printf("Clock: COSC = %d%d%d\n",
-            OSCCONbits.COSC2,
-            OSCCONbits.COSC1,
-            OSCCONbits.COSC0);
+           OSCCONbits.COSC2,
+           OSCCONbits.COSC1,
+           OSCCONbits.COSC0);
     printf("系统时钟 Fosc = %lu MHz\n", CLOCK_SystemFrequencyGet() / 1000000);
     printf("指令时钟 FCY = %lu MHz\n", CLOCK_InstructionFrequencyGet() / 1000000);
 
-#if 1 /* 中断优先级自检报告(读实际 IPCx 寄存器值) */
+    /* 中断优先级自检报告(读实际 IPCx 寄存器值) */
     printf("[IRQ] AD1=%u  T3=%u\n",
-            INT_PRIORITY_AD1, INT_PRIORITY_T3);
+           INT_PRIORITY_AD1, INT_PRIORITY_T3);
     printf("[IRQ] IC1=%u  IC2=%u  IC3=%u\n",
-            INT_PRIORITY_IC1, INT_PRIORITY_IC2, INT_PRIORITY_IC3);
+           INT_PRIORITY_IC1, INT_PRIORITY_IC2, INT_PRIORITY_IC3);
     printf("[IRQ] U2TX=%u  U2RX=%u	U2E=%u\n",
-            INT_PRIORITY_U2TX, INT_PRIORITY_U2RX, INT_PRIORITY_U2E);
-#endif
+           INT_PRIORITY_U2TX, INT_PRIORITY_U2RX, INT_PRIORITY_U2E);
 
-#if 1 /* PWM 配置自检报告:BSP 层派生体系(经 BSP_FREQ_Verify 后到此处,PHASE1/CAM 必与派生值一致) */
-    {
-        uint16_t phase1_reg = PHASE1;   /* 实读 SFR(若与派生值不等,根本到不了这里) */
-        printf("[PWM] mode = %s  CAM reg = %u\n",
-                BSP_PWM_CENTER_ALIGNED ? "Center-Aligned" : "Edge-Aligned",
-                PWMCON1bits.CAM);
-        printf("[PWM] PHASE1 reg = %u  derived = %u  (match: %s)\n",
-                phase1_reg, BSP_PWM_PHASE_TICKS,
-                (phase1_reg == BSP_PWM_PHASE_TICKS) ? "YES" : "NO");
-        printf("[PWM] freq = %lu Hz    period = %u ticks (%lu us)\n",
-                BSP_PWM_FREQUENCY_HZ, BSP_PWM_PERIOD_TICKS,
-                (uint32_t)1000000UL / BSP_PWM_FREQUENCY_HZ);
-        printf("[PWM] duty fullscale = %u  min = %u  max = %u\n",
-                BSP_DUTY_FULLSCALE, BSP_DUTY_MIN, BSP_DUTY_MAX);
-    }
-#endif
+    /* PWM 自检报告 */
+    printf("[PWM] align = %s  CAM reg = %u\n",
+           BSP_PWM_ALIGNMENT ? "Center-Aligned" : "Edge-Aligned",
+           PWMCON1bits.CAM);
+	VERIFY(BSP_PWM_ALIGNMENT == PWMCON1bits.CAM); /* bsp 模式 ↔ MCC CAM */
+
+    printf("[PWM] PHASE1 reg = %u  derived = %u\n", PHASE1, BSP_PWM_PHASE_TICKS);
+    /* PWM 频率母宏 vs MCC 写入的 PHASE1 寄存器对齐校验。
+     * 若 MCC GUI 改了频率/PLL/预分频/对齐模式却忘了同步 bsp_freq.h，
+     * 此处 VERIFY 死循环，调试器原地捕获，杜绝"占空比刻度/时基分频静默失准"。
+     */
+    VERIFY(PHASE1 == BSP_PWM_PHASE_TICKS);
+
+    printf("[PWM] freq = %lu Hz    period = %u ticks (%lu us)\n",
+           BSP_PWM_FREQUENCY_HZ, BSP_PWM_PERIOD_TICKS,
+           (uint32_t)1000000UL / BSP_PWM_FREQUENCY_HZ);
+
+    printf("[PWM] duty fullscale = %u  min = %u  max = %u\n",
+           BSP_DUTY_FULLSCALE, BSP_DUTY_MIN, BSP_DUTY_MAX);
+
+    /* 驱动模式配对自检: 电机模式六步↔pwm边沿对齐 / 电机模式SPWM↔pwm中心对齐。
+     */
+	if(MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM) {
+		printf("[MODE] drive = SPWM\n");
+		VERIFY(BSP_PWM_ALIGNMENT == BSP_PWM_ALIGN_CENTER);
+	}
+	else if(MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP) {
+		printf("[MODE] drive = SIX-STEP\n");
+		VERIFY(BSP_PWM_ALIGNMENT == BSP_PWM_ALIGN_EDGE);
+	}
+	else {
+		printf("[MODE] new drive = %d\n", MC_DRIVE_MODE);
+		VERIFY(0); /* 未知驱动模式:阻断停机,程序不得继续运行 */
+	}
+}
+
+/*
+ * Debug_Report 调试打印：采样数据(直接调 BSP/mc_services) + 电机统一句柄快照。
+ * 每 500ms(Tier-3)调用一次，内部分频后才真正打印。
+ * 仅允许主循环上下文调用，严禁 ISR 内调用（GetHandle 非原子快照）。
+ */
+static void MAIN_SECTION Debug_Report(void)
+{
+	static uint16_t s_cnt = 0;
+	if (++s_cnt < 10) {
+		return;
+	}
+	s_cnt = 0;
+
+	Motor_Handle_t *m = Motor_GetHandle();
+	/* 采样数据保持直接调用(不纳入 motor handle) */
+	printf("Vbus=%lu mV  Ia=%d  Ib=%d  Ic=%d  Ibus=%d mA\n",
+	       (uint32_t)BSP_ADC_GetVbusMv(),
+	       MC_GetCurrentIamA(), MC_GetCurrentIbmA(),
+	       MC_GetCurrentIcmA(), MC_GetCurrentIbusmA());
+	/* 电机状态经统一句柄读取 */
+	printf("mode=%d state=%d fault=0x%X hall=%d en=%d duty=%u/%u age=%lums\n",
+	       m->drive_mode,
+	       m->state, (uint16_t)m->fault, m->hall_status,
+	       (uint16_t)m->six_step_en, m->target_duty, m->current_duty,
+	       (unsigned long)m->last_edge_age_ms);
 }
 
 int MAIN_SECTION main(void) {
     // initialize the device
     SYSTEM_Initialize();
-    INTERRUPT_GlobalDisable();
 
+    /*0_自检报告(紧随 MCC 初始化,立即调用)
+     * SYSTEM_Initialize 末尾已开全局中断(system.c: INTERRUPT_GlobalEnable),
+     * printf 可用;
+	 */
+    SelfCheck_Report();
+
+    INTERRUPT_GlobalDisable();
     /*1_1_BSP初始化*/
     //中断关闭期间，禁用printf，否则会陷入串口阻塞
     GPIO_Configure_LEDS();
@@ -138,30 +188,21 @@ int MAIN_SECTION main(void) {
     MCP4922_Init();
 
 	/*1_3_测试模块*/
-    /* PWM 频率母宏 vs MCC 写入的 PHASE1 寄存器对齐校验。
-     * 若 MCC GUI 改了频率却忘了同步 bsp_freq.h,此处 VERIFY 死循环,
-     * 调试器原地捕获,杜绝"占空比刻度/时基分频静默失准"的幽灵故障。 */
-    BSP_FREQ_Verify();
-	TEST_Init();
+    TEST_Init();
 
     /*2_app init*/
     UartLframe_Init();
     MCProtocol_Init();   /* UART 帧协议回调由 mc_protocol 模块注册。负责上传故障 */
     MCButton_Init();     /* 按键消抖初始化 */
-	#if 0 //test
-    Motor_Init();   /* 统一编排 motor 层 init：状态机/Ramp/SIXSTEP/HALL/MC_Fault */
-	#endif
+    Motor_Init();   /* 统一编排 motor 层 init：状态机/Ramp/驱动分发(SIXSTEP|SPWM)/HALL/MC_Fault */
     MCFaultIndicator_Init();  /* LED 指示初始化(须在 GPIO_Configure_LEDS 之后) */
 
     /*3_中断使能*/
     INTERRUPT_GlobalEnable();
 
-    SelfCheck_Report();   /* 硬件/配置自检报告 */
-
     //上电初始化，延时500ms。等待模拟信号稳定
     //接下来做电压保护，就不会出现误报故障的情况
     Delay_ms(500);
-	uint8_t cnt = 0;
     while (1) {
         /* ===== Tier-4 事件驱动(无固定节拍,每轮跑) =====
          * UART 帧解析,收到上位机信息触发回调处理[无任务时迅速空转回到 Tier-2 检查] */
@@ -174,16 +215,8 @@ int MAIN_SECTION main(void) {
         if (BSP_ADC_TimeBase_Is1msFlag()) {
             BSP_ADC_TimeBase_Clear1msFlag();
             MCButton_Tick1ms();
-			#if 0 //test
             Motor_Tick();
-			#endif
             MCFaultIndicator_Tick1ms();   /* LED 心跳/故障闪烁 */
-			cnt++;
-			if(cnt>50) {
-				cnt = 0;
-				PWM_SPWM_DUTY_Check();
-			}
-
         }
 
         /* ===== Tier-3 监控层(500ms 慢节拍) =====
@@ -192,20 +225,8 @@ int MAIN_SECTION main(void) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
 
-#if 0 /* 调试块:打印采样/状态,节拍已固定 500ms */
-            {
-                Motor_Handle_t *m = Motor_GetHandle();
-                /* 采样数据保持直接调用(不纳入 motor handle) */
-                printf("Vbus=%lu mV  Ia=%d  Ib=%d  Ic=%d  Ibus=%d mA\n",
-                        (uint32_t)BSP_ADC_GetVbusMv(),
-                        MC_GetCurrentIamA(), MC_GetCurrentIbmA(),
-                        MC_GetCurrentIcmA(), MC_GetCurrentIbusmA());
-                /* 电机状态经统一句柄读取 */
-                printf("state=%d fault=0x%X hall=%d 6step=%d duty=%u/%u age=%lums\n",
-                        m->state, (uint16_t)m->fault, m->hall_status,
-                        (uint16_t)m->six_step_en, m->target_duty, m->current_duty,
-                        (unsigned long)m->last_edge_age_ms);
-            }
+#if 1 /* 调试块:每 500ms 调用,Debug_Report 内部 10s 分频打印(0=关闭) */
+            Debug_Report();
 #endif
         }
     }
