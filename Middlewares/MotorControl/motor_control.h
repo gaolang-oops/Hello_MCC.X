@@ -52,6 +52,10 @@
 /* 自举电容预充电时长（计时职责归状态机，故宏定义于此）*/
 #define BOOTSTRAP_CHARGE_MS         50U
 
+/* SPWM PWM 充电：PDC=满量程/2 → 下桥导通占比 50%（互补模式 L_on = 1 - PDC/PHASE）。
+ * 宏体引用 MC_DUTY_FULLSCALE 属惰性展开，消费方 motor_control.c 已含 mc_services.h。 */
+#define BOOTSTRAP_CHARGE_DUTY       (MC_DUTY_FULLSCALE >> 1)
+
 #ifdef	__cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -59,7 +63,7 @@ extern "C" {
 typedef enum {
     MOTOR_STATE_STOPPED = 0,   // 停机：硬关 6 管(PWM_AllOff)，等待 KEY0 允许
     MOTOR_STATE_FAULT,         // 故障吸收态：任意态+fault 进入；仅外部清故障可转出→STOPPED
-    MOTOR_STATE_BOOTSTRAP,     // 瞬态：PWM_HighOffLowOn 三相下管常通，立即迁移到 CHARGING
+    MOTOR_STATE_BOOTSTRAP,     // 瞬态：自举充电启动(六步=下管常通 HOFF_LON；SPWM=下桥 PWM HOFF_LPWM)，立即迁移到 CHARGING
     MOTOR_STATE_CHARGING,      // 稳态：等待自举电容充电 50ms 完成
     MOTOR_STATE_READY,         // 就绪：充电完成，PWM 使能，等旋钮指令；超时回 STOPPED
     MOTOR_STATE_RUNNING,       // 运行：按指令占空比输出

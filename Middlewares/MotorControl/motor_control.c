@@ -135,8 +135,14 @@ void Motor_Tick(void) {
             break;
 
         case MOTOR_STATE_BOOTSTRAP:
-            /* 瞬态：三相下管常通，启动自举充电计时 */
+            /* 瞬态：自举充电。六步=下桥常通(HOFF_LON)；SPWM=下桥 50% PWM 充电
+             * (HOFF_LPWM：风车态限流 + PDC 预置 50% 中点便于交接，先置 PDC 再切 Override)。 */
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+            PWM_SetDuty_UVW(BOOTSTRAP_CHARGE_DUTY, BOOTSTRAP_CHARGE_DUTY, BOOTSTRAP_CHARGE_DUTY);
+            PWM_HighOffLowPwm();
+#else
             PWM_HighOffLowOn();
+#endif
             s_bootstrap_start_ms = MC_GetTickMs();
             s_motor_state = MOTOR_STATE_CHARGING;
             break;

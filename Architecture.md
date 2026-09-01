@@ -16,7 +16,7 @@ flowchart TD
     FLT["MC_Fault.c<br/>故障标志/过流(L1 ISR 立即关断)/blanking + L2 过压·欠压·过载·霍尔丢失<br/>MC_Fault_Init · MC_OverCurrentCheck · MC_Fault_CheckVoltage · MC_Fault_CheckOverload · MC_Fault_CheckHall · MC_HasAnyFault"]
     RAMP["mc_ramp.c<br/>占空比缓变（纯软件）+ 目标 provider 注入<br/>MC_Ramp_Step · MC_Ramp_SetTargetProvider"]
     SS["six_step.c<br/>查表换相 + s_enabled 闸门<br/>SIXSTEP_Communicate · SIXSTEP_Enable"]
-    PWMC["pwm_common.c<br/>PWM 寄存器唯一所有者<br/>PWM_AllOff · PWM_HighOffLowOn · PWM_HighPwmLowOff · PWM_SetPhaseMode · PWM_SetDutyCycle"]
+    PWMC["pwm_common.c<br/>PWM 寄存器唯一所有者<br/>PWM_AllOff · PWM_HighOffLowOn · PWM_HighOffLowPwm · PWM_HighPwmLowOff · PWM_SetPhaseMode · PWM_SetDutyCycle"]
     HALL["hall_speed_fdbk.c<br/>Hall 信号处理(去抖/合法态/变化检测/非法态确认 HALL_INVALID) + 边沿时戳(HALL_TIMEOUT 源) + ResetEdgeTimer<br/>hall_status 唯一 owner · 观察者上抛"]
     MCS["mc_services.c<br/>唯一平台接缝（motor 层仅此 .c include BSP）<br/>时基/工程单位采样/指令输入/Hall/延时/OCP语义 纯转发<br/>★公共头 mc_services.h 含 bsp_freq.h 数值宏(无 BSP 类型)"]
     MCC["mcc pwm.h / clock.h / spi1.h / pin_manager.h<br/>寄存器原语 / _XTAL_FREQ"]
@@ -157,7 +157,7 @@ flowchart TD
 
     FAULT["FAULT 故障吸收态<br/>SIXSTEP_Enable(false) + Ramp_ForceZero<br/>拒绝任何启动路径；!fault -> STOPPED"]
     STOP["STOPPED 正常停机<br/>SIXSTEP_Enable(false) + Ramp_ForceZero<br/>cmd==START -> BOOTSTRAP"]
-    BOOT["BOOTSTRAP 瞬态<br/>PWM_HighOffLowOn() 下管常通<br/>记录 s_bootstrap_start_ms"]
+    BOOT["BOOTSTRAP 瞬态<br/>六步: PWM_HighOffLowOn 下管常通<br/>SPWM: PWM_HighOffLowPwm 下桥 50% PWM 充电<br/>记录 s_bootstrap_start_ms"]
     CHG["CHARGING 稳态<br/>判 50ms 充电完成 -> PWM_AllOff"]
     READY["READY 就绪待速<br/>自举已充,PWM_AllOff 后等旋钮<br/>旋钮>0 -> RUNNING；30s 超时 -> STOPPED"]
     RUN["RUNNING<br/>MC_Ramp_Step() 缓变<br/>ISR: Hall->Communicate<br/>旋钮=0 & current=0 -> READY(缓停)"]
@@ -237,12 +237,13 @@ ISR 置位 ─► s_fault_flags != 0 ─► Motor_Tick 读 fault=true
 | 函数 | 枚举 | OVRENH | OVRDATH | OVRENL | OVRDATL | 含义 |
 |---|---|:---:|:---:|:---:|:---:|---|
 | `PWM_AllOff` | `PWM_HOFF_LOFF` | 1 | 0 | 1 | 0 | 6 管全关（停机/故障） |
-| `PWM_HighOffLowOn` | `PWM_HOFF_LON` | 1 | 0 | 1 | 1 | 下管常通（自举充电） |
+| `PWM_HighOffLowOn` | `PWM_HOFF_LON` | 1 | 0 | 1 | 1 | 下管常通（自举充电，六步用） |
+| `PWM_HighOffLowPwm` | `PWM_HOFF_LPWM` | 1 | 0 | 0 | 0(无效) | 上桥强关/下桥 PWM（自举充电，SPWM 用：风车态限流 + PDC 预置 50% 中点交接；调用前须先 `PWM_SetDuty_UVW` 置充电占空，下桥导通占比 = 1−PDC/PHASE） |
 | `PWM_HighPwmLowOff` | `PWM_HPWM_LOFF` | 0 | 0(无效) | 1 | 0 | 上桥 PWM/下桥关（运行基底，每次换相按相覆盖） |
 
 > 另有 `PWM_SetDutyCycle(duty)`：三相同步写 PDC1/2/3（纯寄存器操作，不维护软件影子），由 `mc_ramp` 缓变调用 + `MC_Ramp_ForceZero` 归零。它与上表三原语同属 `pwm_common`，是占空比写入的唯一入口。
 >
-> SPWM 原语已预留于 `pwm_common`（寄存器所有权不变）：`PWM_HPWM_LPWM`（互补自主控制模式）、`PWM_SetDutyPhase` / `PWM_SetDuty_UVW`（三相独立/同步写 PDC）、`PWM_HandOffToPwm`（交还互补自主控制）。消费方 `spwm_drive` 未接入（`TODO(SPWM)`，见 §四 驱动模式母开关）。
+> SPWM 原语已预留于 `pwm_common`（寄存器所有权不变）：`PWM_HPWM_LPWM`（互补自主控制模式）、`PWM_SetDutyPhase` / `PWM_SetDuty_UVW`（三相独立/同步写 PDC）、`PWM_HandOffToPwm`（交还互补自主控制）。其中 `PWM_SetDuty_UVW` 已由状态机 BOOTSTRAP 态消费（SPWM PWM 充电占空预置）；其余待 `spwm_drive` 接入（`TODO(SPWM)`，见 §四 驱动模式母开关）。
 
 ## 八、Hall 换相调用链（ISR 驱动）
 
@@ -460,7 +461,7 @@ Hello_MCC.X/
 - **ADC 必须与 PWM 同步采样**：电流须采在计数器到顶/到底的稳定相位；故 ADC 由 PWM 硬件触发，过流检测走 ADC ISR 而非独立定时器（见 §二"为什么过流用 ADC 时基"）。
 - **CH0 轮询、CH1~3 常驻**：相电流 Ia/Ib/Ic（AN0/1/2 → CH1/2/3 → BUF1/2/3）每个 PWM 周期都采（过流检测要实时值，不滤波）；Vbus/Knob/Ibus 共用 CH0 分时轮询（slot 0/1/2 = AN3/AN4/AN6），慢变量做 SMA 滤波。见 `bsp_adc.c:s_ch0AnMap`、`ADC_Data_t`。
 - **TMR3 与 ADC 职责分离**：TMR3 作"测时间"的独立秒表（阻塞延时、ms 时间戳），不参与控制节拍；即便 ADC 故障停采，延时/计时仍准。
-- **自举充电时序**：进入运行态前下管常通 `BOOTSTRAP_CHARGE_MS=50ms` → `PWM_AllOff`（CHARGING 末拍）→ 进入 **READY 态**跨拍等旋钮 → 旋钮>0 时交还上桥 override + 使能换相。关断裕量由"CHARGING→READY→RUNNING 跨拍"天然提供（≥1ms），替代了原 `MC_Delay10us(50)` 阻塞延时。
+- **自举充电时序**：进入运行态前充电 `BOOTSTRAP_CHARGE_MS=50ms` → `PWM_AllOff`（CHARGING 末拍）→ 进入 **READY 态**跨拍等旋钮 → 旋钮>0 时交还上桥 override + 使能换相。关断裕量由"CHARGING→READY→RUNNING 跨拍"天然提供（≥1ms），替代了原 `MC_Delay10us(50)` 阻塞延时。两种模式均无直通路径（上桥被 Override 强制关）：六步 = 下管常通（`PWM_HighOffLowOn`）；SPWM = 下桥 50% PWM 充电（`PWM_HighOffLowPwm` + `BOOTSTRAP_CHARGE_DUTY`=满量程/2，互补模式 PWMxL=比较器补 → 下桥导通占比 1−PDC/PHASE=50%），差异价值在风车态下桥 PWM 限流 + PDC 预置 50% 中点（SPWM 零矢量）交接无跳变准备。
 
 - **PWM 频率母参数集中**（`bsp_freq.h`）：全工程只有 `BSP_PWM_FREQUENCY_HZ` 一个自由度，周期计数/占空满量程/tick 换算全部编译期 `#define` 派生，零运行时开销。main.c 启动期 `VERIFY(PHASE1)` 断言 MCC 写入的 `PHASE1` == 派生值，杜绝"改了 MCC GUI 频率/PLL 却忘了同步代码"的静默失准。
 - **过流 raw 比较封装在 BSP**（OCP 语义接缝）：motor 层经 `MC_OC_Configure(mA)` 下发阈值（Init 期一次 mA->raw 反算），ISR 热路径 `MC_OC_Is*` 仅做 raw 字面量比较，零运行时换算。motor 层只见 mA/bool，不感知 raw/标定常量。

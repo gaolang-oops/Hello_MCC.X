@@ -42,7 +42,8 @@ typedef enum {
     PWM_HOFF_LOFF = 0,  /* 上下桥均强制关                           (OVRENH=1, OVRDATH=0, OVRENL=1, OVRDATL=0) */
     PWM_HPWM_LOFF = 1,  /* 上桥 PWMxH 受 PWM 控制，下桥 PWMxL 强制关 (OVRENH=0,               OVRENL=1, OVRDATL=0) */
     PWM_HOFF_LON  = 2,  /* 上桥强制关，下桥强制常通                 (OVRENH=1, OVRDATH=0, OVRENL=1, OVRDATL=1) */
-    PWM_HPWM_LPWM = 3,  /* 上下桥均交还 PWM 互补自主控制(SPWM 用)    (OVRENH=0,               OVRENL=0)        */
+    PWM_HOFF_LPWM = 3,  /* 上桥强制关，下桥交还 PWM 互补自主控制     (OVRENH=1, OVRDATH=0, OVRENL=0)           */
+    PWM_HPWM_LPWM = 4,  /* 上下桥均交还 PWM 互补自主控制(SPWM 用)    (OVRENH=0,               OVRENL=0)        */
 } PWM_PhaseMode_t;
 
 /* 三相同步写占空比到硬件（纯寄存器操作，不维护软件影子） */
@@ -61,6 +62,7 @@ void PWM_SetPhaseMode(PWM_GENERATOR gen, PWM_PhaseMode_t mode); /* 单相 Overri
 void PWM_AllOff(void);             /* 三相强制关 6 管          */
 void PWM_HighOffLowOn(void);        /* 三相下管常通(自举充电)    */
 void PWM_HighPwmLowOff(void);
+void PWM_HighOffLowPwm(void);       /* 三相上桥强关+下桥 PWM(SPWM 自举充电，调用前须先置 PDC) */
 void PWM_HandOffToPwm(void);        /* 三相交还 PWM 互补自主控制(SPWM 运行态入口) */
 
 #endif	/* PWM_COMMON_H */

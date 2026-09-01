@@ -55,6 +55,16 @@ void PWM_SetPhaseMode(PWM_GENERATOR gen, PWM_PhaseMode_t mode) {
             PWM_OverrideLowEnable  (gen);        /* OVRENL = 1 */
             break;
 
+        case PWM_HOFF_LPWM:
+            /* 上桥强制关，下桥交还 PWM 互补自主控制(SPWM 自举充电)。
+             * 下桥导通占比 = 1 - PDC/PHASE，充电占空由调用方预置。
+             * OVRDATL 写 0 为占位(OVRENL=0 时无效)，维持全模式 OVRDAT=00 不变量。 */
+            PWM_OverrideDataHighSet(gen, false); /* OVRDATH = 0 */
+            PWM_OverrideDataLowSet (gen, false); /* OVRDATL = 0 (占位) */
+            PWM_OverrideHighEnable (gen);        /* OVRENH = 1 */
+            PWM_OverrideLowDisable (gen);        /* OVRENL = 0 */
+            break;
+
         case PWM_HPWM_LPWM:
             /* 双桥均交还 PWM 互补自主控制(SPWM 运行态)。
              * OVRDAT 保持 00(此前 HOFF_LOFF 状态已写)，直接全关 OVREN。
@@ -94,6 +104,18 @@ void PWM_HighPwmLowOff(void) {
     PWM_SetPhaseMode(PWM_GENERATOR_1, PWM_HPWM_LOFF);
     PWM_SetPhaseMode(PWM_GENERATOR_2, PWM_HPWM_LOFF);
     PWM_SetPhaseMode(PWM_GENERATOR_3, PWM_HPWM_LOFF);
+}
+
+/* BOOTSTRAP(SPWM): 三相 PWM_HOFF_LPWM (H=0 强制关, L 交还 PWM)。
+ * 与 HOFF_LON 同样无直通路径(上桥被 Override 强制关)；差异在：
+ *   1) 风车态(电机惯性旋转)下下桥 PWM 充电可限制绕组制动电流(RMS 减半 @50% 占空)；
+ *   2) PDC 预置 50% 中点 = SPWM 零矢量，交接 PWM_HandOffToPwm 时无占空跳变准备。
+ * 调用约定：先 PWM_SetDuty_UVW 置充电占空比(互补模式 PWMxL = 比较器补，
+ * 下桥导通占比 = 1 - PDC/PHASE)，再调本函数。 */
+void PWM_HighOffLowPwm(void) {
+    PWM_SetPhaseMode(PWM_GENERATOR_1, PWM_HOFF_LPWM);
+    PWM_SetPhaseMode(PWM_GENERATOR_2, PWM_HOFF_LPWM);
+    PWM_SetPhaseMode(PWM_GENERATOR_3, PWM_HOFF_LPWM);
 }
 
 /* SPWM 运行态入口：三相从"上电强制全关"(MCC 配置 IOCON=0xC300)
