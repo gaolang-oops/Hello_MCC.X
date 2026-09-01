@@ -1,10 +1,10 @@
 /*
  * bsp_freq.h
  *
- * PWM 频率母参数与派生常量集中管理(BSP 层)。
+ * PWM 频率母参数与派生常量集中管理
  *
  * 设计思想("单一母宏 + 编译期派生链"):
- *   全工程只有 BSP_PWM_FREQUENCY_HZ(频率)与 BSP_PWM_CENTER_ALIGNED(对齐模式)
+ *   BSP_PWM_FREQUENCY_HZ(频率)与 BSP_PWM_ALIGNMENT(对齐模式)
  *   两个真正的"自由度",其余(PHASE 寄存器计数、PWM 周期计数、1ms 分频系数、
  *   占空比满量程、tick 换算)都是它们的函数,全部用 #define 在编译期求值,
  *   零运行时开销。
@@ -12,13 +12,15 @@
  * 与 mcc_generated_files/pwm.c 的关系:
  *   MCC 生成的 PHASE1/2/3 寄存器值无法宏化(重生成会覆盖手改),
  *   故本头派生值与 PHASE1 是两条独立计算路径。
- *   BSP_FREQ_Verify() 在启动期断言二者一致——若 MCC GUI 改了频率/PLL/预分频
- *   却忘了同步本头,启动期原地卡死(VERIFY 死循环),调试器可立即捕获。
+ *   main.c 的 SelfCheck_Report()开头用
+ *   VERIFY(PHASE1 == BSP_PWM_PHASE_TICKS) 内联断言二者是否一致。
+ *   若 MCC GUI 改了频率/PLL/预分频却忘了同步本头,
+ *   启动期原地卡死(VERIFY 死循环),调试器可立即捕获。
  *
  * 分层归属:
- *   - BSP 层(bsp_adc.c / bsp_freq.c)直接 include 本头
+ *   - BSP 层(bsp_adc.c 等)直接 include 本头
  *   - motor 层经 mc_services.h 间接获取
- *   - 应用层(main.c)直接 include,用于调用 BSP_FREQ_Verify()
+ *   - 应用层(main.c)直接 include,用于派生宏与启动期频率自检
  */
 
 #ifndef BSP_FREQ_H
@@ -34,7 +36,7 @@ extern "C" {
 #endif
 
 /* ============ 母参数(唯一真值源) ============
- * 全工程只有 BSP_PWM_FREQUENCY_HZ(频率)与 BSP_PWM_CENTER_ALIGNED(对齐模式)
+ * 全工程只有 BSP_PWM_FREQUENCY_HZ(频率)与 BSP_PWM_ALIGNMENT(对齐模式)
  * 两个真正的"自由度",周期计数由它们 + _XTAL_FREQ(MCC) 编译期派生,
  * 其余量再从周期派生。
  *
@@ -42,27 +44,33 @@ extern "C" {
  *
  * !! 同步规则 !!
  *   在 MCC GUI 改 PWM 频率/PLL/PCLKDIV 并重新生成后,必须同步本宏,
- *   否则 BSP_FREQ_Verify() 会令启动期死循环。
+ *   否则 main.c 启动期 VERIFY(PHASE1) 会死循环。
  */
 #define BSP_PWM_FREQUENCY_HZ        20000UL   /* 20 kHz,与 MCC PWM 配置一致 */
 
-/* ============ PWM 对齐模式母开关(唯一真值源) ============
- * 1 = 中心对齐(PWMCONx CAM=1, ITB=1), 0 = 边沿对齐(CAM=0)。
- * 下面的 PHASE/PERIOD 派生公式随本开关自动切换,
- * BSP_FREQ_Verify() 启动期校验 MCC 写入的 CAM 位与本开关一致。
+/* ============ PWM 对齐模式选项与选择(硬件真值源) ============
+ *   BSP_PWM_ALIGN_CENTER : 中心对齐(PWMCONx CAM=1, ITB=1)
+ *   BSP_PWM_ALIGN_EDGE   : 边沿对齐(CAM=0)
+ * 下面的 PHASE/PERIOD 派生公式随选择自动切换。
  *
- * !! 同步规则 !!
- *   在 MCC GUI 改 PWM 对齐模式并重新生成后,必须同步本宏,
- *   否则 BSP_FREQ_Verify() 会令启动期死循环。
+ * !! 配对同步规则(硬件侧两处手动同步) !!
+ *   本选择须与电机层驱动模式母开关 MC_DRIVE_MODE(motor_control.h)配对:
+ *     MC_DRIVE_MODE_SPWM    ↔ BSP_PWM_ALIGN_CENTER
+ *     MC_DRIVE_MODE_SIXSTEP ↔ BSP_PWM_ALIGN_EDGE
+ *   且须与 MCC GUI(PWM 对齐模式 + 触发分频 TRGDIV)一致并重新生成。
  *
  * !! ADC 触发耦合(切模式前必读) !!
  *   中心对齐下 TRIG1=PHASE1 每周期产生 2 次比较匹配,靠 MCC"触发后分频比
  *   1:2"(TRGDIV=1:2)还原为每周期 1 次 ADC 触发;边沿对齐下每周期仅 1 次
  *   匹配,须把 MCC 的 TRGDIV 改回 1:1,否则 ADC ISR 频率减半,系统节拍失准。
  */
-#define BSP_PWM_CENTER_ALIGNED      1
+#define BSP_PWM_ALIGN_EDGE          0
+#define BSP_PWM_ALIGN_CENTER        1
 
-#if BSP_PWM_CENTER_ALIGNED
+/* 选择中心对齐 / 边沿对齐 */
+#define BSP_PWM_ALIGNMENT      BSP_PWM_ALIGN_CENTER
+
+#if (BSP_PWM_ALIGNMENT == BSP_PWM_ALIGN_CENTER)
 /* ============ PHASE 寄存器值(中心对齐半周期) ============
  * 中心对齐模式: PHASE = Fosc / (Fpwm x 预分频 x 2)。
  * 140MHz/20kHz/2 = 3500,即 PHASE1/2/3 寄存器值(MCC 写入 0xDAC)。
@@ -75,7 +83,7 @@ extern "C" {
  */
 #define BSP_PWM_PERIOD_TICKS        ((uint16_t)(2UL * BSP_PWM_PHASE_TICKS))
 
-#else
+#elif (BSP_PWM_ALIGNMENT == BSP_PWM_ALIGN_EDGE)
 /* ============ PHASE 寄存器值(边沿对齐全周期) ============
  * 边沿对齐模式(公式 14-1): PHASE = Fosc / (Fpwm x 预分频)。
  * 140MHz/20kHz = 7000。
@@ -87,8 +95,7 @@ extern "C" {
  * 仅供时长显示/换算,不是寄存器值;寄存器校验用 BSP_PWM_PHASE_TICKS。
  */
 #define BSP_PWM_PERIOD_TICKS        BSP_PWM_PHASE_TICKS
-
-#endif /* BSP_PWM_CENTER_ALIGNED */
+#endif /* BSP_PWM_ALIGNMENT */
 
 /* ============ 时基派生(ADC ISR 频率 == PWM 频率) ============
  * ADC 由 PWM1 TRIG1 硬件触发。TRIG1 = PHASE1(3500,计数器峰值)时,
@@ -126,12 +133,6 @@ extern "C" {
  * 入参为编译期常量时,整个表达式在编译期求值,无运行时除法。
  */
 #define BSP_US_TO_PWM_TICKS(us)     ((uint16_t)(((uint32_t)(us) * BSP_PWM_FREQUENCY_HZ) / 1000000UL))
-
-/* ============ 启动期对齐检查 ============
- * 在 SYSTEM_Initialize() 之后、INTERRUPT_GlobalEnable() 之前调用一次。
- * 若 MCC 写入的 PHASE1 与母宏 BSP_PWM_PHASE_TICKS 不一致,VERIFY 死循环;
- */
-void BSP_FREQ_Verify(void);
 
 #ifdef __cplusplus
 }

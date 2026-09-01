@@ -36,6 +36,19 @@
 #include "mc_ramp.h"
 #include "MC_Fault.h"   /* Motor_Handle_t.fault 字段类型 */
 
+/* ============ 驱动模式母开关（唯一真值源，编译期选择）============
+ *   MC_DRIVE_MODE_SIXSTEP : 六步方波换相 ↔ 边沿对齐 PWM（CAM=0, PHASE=7000, TRGDIV=1:1）
+ *   MC_DRIVE_MODE_SPWM    : SPWM 正弦调制 ↔ 中心对齐 PWM（CAM=1, PHASE=3500, TRGDIV=1:2）
+ *
+ * !! 配对同步规则（切换本宏后须手动同步两处）!!
+ *   1) bsp_freq.h 的 BSP_PWM_ALIGNMENT（对齐模式编译期派生：PHASE/占空满量程）
+ *   2) MCC GUI（PWM 对齐模式 + 触发分频 TRGDIV）并重新生成
+ *
+ */
+#define MC_DRIVE_MODE_SIXSTEP   0
+#define MC_DRIVE_MODE_SPWM      1
+#define MC_DRIVE_MODE           MC_DRIVE_MODE_SPWM
+
 /* 自举电容预充电时长（计时职责归状态机，故宏定义于此）*/
 #define BOOTSTRAP_CHARGE_MS         50U
 
@@ -76,6 +89,7 @@ typedef enum {
 typedef struct {
     /* —— 状态机层 —— */
     Motor_State_e  state;          /* 状态机当前状态 */
+    uint8_t        drive_mode;     /* 驱动模式快照（MC_DRIVE_MODE_SIXSTEP/SPWM） */
     /* —— 子模块指针（视图，不拥有） —— */
     Ramp_Handle_t *ramp;           /* 占空比缓变句柄指针 */
     /* —— 子模块快照（GetHandle 时刷新） —— */
