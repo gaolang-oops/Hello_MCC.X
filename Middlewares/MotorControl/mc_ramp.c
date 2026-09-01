@@ -5,7 +5,7 @@
  * 职责：纯软件缓变策略，不碰寄存器。
  *      目标速度来自 mc_services（旋钮/速度环），换算为占空比域缓变；
  *
- * TODO(SPWM): 输出汇点注入（spwm_drive 接入时改造）
+ * TODO(SPWM): 输出汇点注入（spwm 模块调制链接入时改造）
  *   当前 MC_Ramp_Step/MC_Ramp_ForceZero 直写三相同一 PDC（PWM_SetDutyCycle），
  *   只适配六步方波（三相共幅值）。SPWM 模式下三相占空按正弦各自独立，
  *   缓变输出是"调幅幅值"而非 PDC —— 不得直写 PDC（会每 1ms 同相打满三路、
@@ -13,7 +13,7 @@
  *   改造方案（模式对称于 MC_Ramp_SetTargetProvider 的目标注入思想）：
  *     预留 MC_Ramp_SetOutputSink(void (*sink)(uint16_t duty))，
  *     默认 sink = PWM_SetDutyCycle（六步，现状零改动）；
- *     SPWM 构建下由 Motor_Init 注入 sink = SPWM_Drive_SetAmplitude
+ *     SPWM 构建下由 Motor_Init 注入 sink = SPWM_SetAmplitude
  *     （幅值经 volatile 变量交 50us 调制 tick 消费）。
  *     MC_Ramp_Init / MC_Ramp_ForceZero 的 PWM_SetDutyCycle(0) 同样改走汇点
  *     （SPWM 下幅值 0 = 三相恒 50% 共模零差压；硬关断仍由状态机 PWM_AllOff 保证）。

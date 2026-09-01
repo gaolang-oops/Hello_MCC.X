@@ -52,9 +52,11 @@
 /* 自举电容预充电时长（计时职责归状态机，故宏定义于此）*/
 #define BOOTSTRAP_CHARGE_MS         50U
 
-/* SPWM PWM 充电：PDC=满量程/2 → 下桥导通占比 50%（互补模式 L_on = 1 - PDC/PHASE）。
+/* SPWM 调制中点（50% 共模零矢量，三相差压=0）：自举充电占空用（本层唯一直用点）。
+ * spwm.c 侧同值同源宏为 HALF_OF_DUTY_FULLSCALE（调制基线 + 使能交接零矢量）。
  * 宏体引用 MC_DUTY_FULLSCALE 属惰性展开，消费方 motor_control.c 已含 mc_services.h。 */
-#define BOOTSTRAP_CHARGE_DUTY       (MC_DUTY_FULLSCALE >> 1)
+#define SPWM_DUTY_MID               (MC_DUTY_FULLSCALE >> 1)
+#define BOOTSTRAP_CHARGE_DUTY       SPWM_DUTY_MID
 
 #ifdef	__cplusplus
 extern "C" {

@@ -18,6 +18,7 @@
 #include "motor_control.h"
 #include "pwm_common.h"
 #include "six_step.h"
+#include "spwm.h"
 #include "mc_ramp.h"
 #include "mc_services.h"   /* 时基 + 旋钮指令（motor 层唯一平台接缝）*/
 #include "MC_Fault.h"      /* MC_HasAnyFault / MC_Fault_Init */
@@ -37,16 +38,11 @@ void Motor_SetCommand(Motor_Cmd_e cmd) {
  * 状态机对"使能/失能驱动输出"的唯一入口，按 MC_DRIVE_MODE（motor_control.h）
  * 编译期分发到具体驱动模块，避免各状态分支散布模式判断：
  *   六步：SIXSTEP_Enable（Hall ISR 换相 + Override 寄存器）
- *   SPWM：TODO
+ *   SPWM：SPWM_Enable（零矢量预置 + 交还互补自主控制，闸门在 spwm 模块）
  */
 static void Drive_Enable(bool en) {
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    /* TODO(SPWM): 接入 spwm_drive 模块后替换本占位
-     *   en=true : 预置三相 PDC=50% 中点 -> PWM_HandOffToPwm()（交还互补自主控制）
-     *             另须在 Motor_Init 处为缓变注入幅值汇点（缓变写幅值，非直写 PDC）
-     *   en=false:  -> PWM_AllOff()
-     * 当前空实现：SPWM 构建下使能后无 PWM 输出动作（Override 保持上电全关态，安全） */
-    (void)en;
+    SPWM_Enable(en);
 #else
     SIXSTEP_Enable(en);
 #endif
@@ -171,7 +167,7 @@ void Motor_Tick(void) {
             	HALL_ResetEdgeTimer();
             	/* 驱动使能（模式分发）：
                  * 六步 = 恢复上桥 override 交还 PWM + 用当前 Hall 建立换相初态
-                 * SPWM = TODO(SPWM) spwm_drive 调制使能 */
+                 * SPWM = SPWM_Enable 交接（已接入）；调制链仍 TODO(SPWM) */
                 Drive_Enable(true);
                 s_motor_state = MOTOR_STATE_RUNNING;
             } else if (++s_ready_ms >= READY_TIMEOUT_MS) {
@@ -187,7 +183,7 @@ void Motor_Tick(void) {
 				/* 缓停完毕：回到ready */
                 s_ready_ms = 0;
                 s_motor_state = MOTOR_STATE_READY;
-            } 
+            }
             break;
     }
 }

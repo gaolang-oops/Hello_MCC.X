@@ -16,7 +16,8 @@ flowchart TD
     FLT["MC_Fault.c<br/>故障标志/过流(L1 ISR 立即关断)/blanking + L2 过压·欠压·过载·霍尔丢失<br/>MC_Fault_Init · MC_OverCurrentCheck · MC_Fault_CheckVoltage · MC_Fault_CheckOverload · MC_Fault_CheckHall · MC_HasAnyFault"]
     RAMP["mc_ramp.c<br/>占空比缓变（纯软件）+ 目标 provider 注入<br/>MC_Ramp_Step · MC_Ramp_SetTargetProvider"]
     SS["six_step.c<br/>查表换相 + s_enabled 闸门<br/>SIXSTEP_Communicate · SIXSTEP_Enable"]
-    PWMC["pwm_common.c<br/>PWM 寄存器唯一所有者<br/>PWM_AllOff · PWM_HighOffLowOn · PWM_HighOffLowPwm · PWM_HighPwmLowOff · PWM_SetPhaseMode · PWM_SetDutyCycle"]
+    SPWM["spwm.c<br/>三相正弦计算(纯函数 SinCos16 查表 + Duty_UVW 映射) + s_enabled 闸门<br/>SPWM_ComputeUabcQ15 · SPWM_Duty_UVW · SPWM_Enable · SPWM_IsEnabled"]
+    PWMC["pwm_common.c<br/>PWM 寄存器唯一所有者<br/>PWM_AllOff · PWM_HighOffLowOn · PWM_HighOffLowPwm · PWM_HighPwmLowOff · PWM_HandOffToPwm · PWM_SetPhaseMode · PWM_SetDutyCycle"]
     HALL["hall_speed_fdbk.c<br/>Hall 信号处理(去抖/合法态/变化检测/非法态确认 HALL_INVALID) + 边沿时戳(HALL_TIMEOUT 源) + ResetEdgeTimer<br/>hall_status 唯一 owner · 观察者上抛"]
     MCS["mc_services.c<br/>唯一平台接缝（motor 层仅此 .c include BSP）<br/>时基/工程单位采样/指令输入/Hall/延时/OCP语义 纯转发<br/>★公共头 mc_services.h 含 bsp_freq.h 数值宏(无 BSP 类型)"]
     MCC["mcc pwm.h / clock.h / spi1.h / pin_manager.h<br/>寄存器原语 / _XTAL_FREQ"]
@@ -36,6 +37,7 @@ flowchart TD
     COMP --> MCC
     MC --> PWMC
     MC --> SS
+    MC --> SPWM
     MC --> RAMP
     MC --> FLT
     MC --> MCS
@@ -43,6 +45,7 @@ flowchart TD
     SS --> PWMC
     SS --> HALL
     SS --> FLT
+    SPWM --> PWMC
     RAMP --> MCS
     RAMP --> PWMC
     FLT --> MCS
@@ -147,7 +150,7 @@ motor 层唯一直接 include BSP 的文件（`mc_services.c`）。
 
 **PWM 母参数派生**（`bsp_freq.h`）：全工程只有 `BSP_PWM_FREQUENCY_HZ`（=20000）与 `BSP_PWM_ALIGNMENT`（对齐模式选择：`BSP_PWM_ALIGN_CENTER`=中心对齐 CAM=1/ITB=1，`BSP_PWM_ALIGN_EDGE`=边沿对齐 CAM=0，选择行风格同电机层 `MC_DRIVE_MODE`）两个真值源，PHASE 寄存器计数/周期计数/占空满量程/tick 换算全部编译期 `#define` 派生，公式随对齐选择 `#if/#elif/#endif` 切换：中心对齐（公式 14-2）`BSP_PWM_PHASE_TICKS` = `_XTAL_FREQ/(2×Fpwm)` = 3500，`BSP_PWM_PERIOD_TICKS` = 2×PHASE = 7000；边沿对齐（公式 14-1）`BSP_PWM_PHASE_TICKS` = `_XTAL_FREQ/Fpwm` = 7000，`BSP_PWM_PERIOD_TICKS` = PHASE。`BSP_DUTY_FULLSCALE` = `BSP_PWM_PHASE_TICKS`（=3500，即原 `KNOB_DUTY_FULLSCALE`，已更名迁址）；`BSP_DUTY_MIN/MAX` = 5%/95%（175/3325，乘法先提升 32 位防溢出）；`BSP_TICKS_PER_MS` = 20；`BSP_US_TO_PWM_TICKS(us)` 微秒换算。启动期频率自检**内联于 `main.c SelfCheck_Report()`**（紧随 `SYSTEM_Initialize()` 调用；`VERIFY(PHASE1 == BSP_PWM_PHASE_TICKS)`，原 `BSP_FREQ_Verify()`/`bsp_freq.c` 已删除）：只校验频率链，不一致 VERIFY 死循环；CAM/TRGDIV 一致性由驱动模式配对自检承担。注：ADC 触发依赖中心对齐"峰值双匹配 + TRGDIV=1:2"，切边沿对齐须同步把 MCC 的 TRGDIV 改回 1:1，否则 ADC ISR 频率减半。
 
-**驱动模式母开关**（`motor_control.h`，电机层唯一真值源）：`MC_DRIVE_MODE` 编译期选择 `MC_DRIVE_MODE_SIXSTEP`（六步方波 ↔ 边沿对齐：CAM=0 / PHASE=7000 / TRGDIV=1:1）或 `MC_DRIVE_MODE_SPWM`（SPWM 正弦 ↔ 中心对齐：CAM=1 / PHASE=3500 / TRGDIV=1:2，当前默认）。母开关不自动改写寄存器/宏，切换时须手动同步两处：① `bsp_freq.h` 的 `BSP_PWM_ALIGNMENT`（PHASE/占空满量程编译期派生）② MCC GUI（PWM 对齐模式 + 触发分频 TRGDIV）重新生成。一致性兜底（**全部阻断，不一致程序不得继续运行**）：CAM 实配漂移 → SelfCheck_Report 内 `VERIFY(BSP_PWM_ALIGNMENT == PWMCON1bits.CAM)`；驱动模式配对 → [MODE] 分支内 `VERIFY`（SPWM↔ALIGN_CENTER / SIXSTEP↔ALIGN_EDGE，未知 `MC_DRIVE_MODE` 值同样停机）；自检窗口中断已开，停机后 UART TX 仍会把诊断送达串口。状态机经 `Drive_Enable()` 门面分发（见 §五）；SPWM 驱动模块 `spwm_drive` 未接入（`TODO(SPWM)`），SPWM 构建下使能为空占位（Override 保持上电全关态，安全）。
+**驱动模式母开关**（`motor_control.h`，电机层唯一真值源）：`MC_DRIVE_MODE` 编译期选择 `MC_DRIVE_MODE_SIXSTEP`（六步方波 ↔ 边沿对齐：CAM=0 / PHASE=7000 / TRGDIV=1:1）或 `MC_DRIVE_MODE_SPWM`（SPWM 正弦 ↔ 中心对齐：CAM=1 / PHASE=3500 / TRGDIV=1:2，当前默认）。母开关不自动改写寄存器/宏，切换时须手动同步两处：① `bsp_freq.h` 的 `BSP_PWM_ALIGNMENT`（PHASE/占空满量程编译期派生）② MCC GUI（PWM 对齐模式 + 触发分频 TRGDIV）重新生成。一致性兜底（**全部阻断，不一致程序不得继续运行**）：CAM 实配漂移 → SelfCheck_Report 内 `VERIFY(BSP_PWM_ALIGNMENT == PWMCON1bits.CAM)`；驱动模式配对 → [MODE] 分支内 `VERIFY`（SPWM↔ALIGN_CENTER / SIXSTEP↔ALIGN_EDGE，未知 `MC_DRIVE_MODE` 值同样停机）；自检窗口中断已开，停机后 UART TX 仍会把诊断送达串口。状态机经 `Drive_Enable()` 门面分发（见 §五）；SPWM 使能已接入 `SPWM_Enable`（spwm 模块，对称于 SIXSTEP_Enable：`en=true` 防御性重置 PDC=50% 中点零矢量（同值宏 `HALF_OF_DUTY_FULLSCALE`/`SPWM_DUTY_MID`，同源 `MC_DUTY_FULLSCALE`）→ `PWM_HandOffToPwm` 交还互补自主控制，交接瞬间差压=0 无转矩冲击；`en=false` → `PWM_AllOff`），但调制链（mc_ramp 幅值汇点 + 50us tick θ 积分 → `SPWM_Duty_UVW`）未接入（`TODO(SPWM)`），RUNNING 态暂为零矢量静默输出、电机不旋转。
 
 ## 五、状态机流转（Motor_Tick 每 1ms 执行）
 
@@ -178,7 +181,7 @@ flowchart TD
 - 任意运行态（BOOTSTRAP/CHARGING/READY/RUNNING）+ fault → 当拍即进 **FAULT 吸收态**（`Motor_Tick` 开头前置分流，优先级高于命令）。前置的三步 L2 慢保护（`MC_Fault_CheckVoltage` 过/欠压 + `MC_Fault_CheckOverload` 过载 IIR + `MC_Fault_CheckHall` 霍尔信号丢失，仅 RUNNING 态生效）在读 `MC_HasAnyFault` 之前运行，可能本拍置标志，由紧随的 fault 前置分流当拍接管。`CheckHall` 的 `hall_age` 经 `HALL_MsSinceLastEdge()` 传入，避免 `MC_Fault` 反向依赖 hall 模块（保持 `MC_Fault → mc_services → BSP` 单向）。
 - **FAULT 是吸收态**：进入后仅响应"清故障"事件，旋钮再大也不重启。`!fault` 时由 FAULT case 内部转出 → STOPPED（下拍再判启动命令），避免清故障瞬间高压启动。运行期清除途径：协议命令 `MC_ClearAllFaults` 或 KEY2 长按≥2s（`mc_button`）。
 - **新增 READY 待速态**：`BOOTSTRAP_CHARGE_MS = 50`（`motor_control.h`）充电完成后 CHARGING 先 `PWM_AllOff()` 进入 READY（本拍只负责关断所有 MOS，结束自举充电）；READY 态若旋钮>0，则 `HALL_ResetEdgeTimer()` + 驱动使能 → RUNNING。**关断裕量由"CHARGING→READY→RUNNING 跨拍"天然提供**（至少 1ms，远大于原 `MC_Delay10us(50)`=500μs），故已删除该阻塞延时，避免在 1ms 控制环内引入 500μs 阻塞抖动；同时把 HALL_TIMEOUT 窗口从"进入运行"起算，避免长时停机后旧时戳导致首个 RUNNING 拍误报。`READY_TIMEOUT_MS = 30000`（30s 无人给旋钮则回 STOPPED，关自举充电节能）。RUNNING 旋钮归零缓停后回 READY 待速（区别于 KEY1 硬停彻底回 STOPPED）。
-- **驱动使能门面（模式分发）**：FAULT / STOPPED / READY→RUNNING 三处的驱动使能/失能收敛为 `Drive_Enable()`（`motor_control.c` 私有静态），按 `MC_DRIVE_MODE`（`motor_control.h` 编译期母开关）分发：六步 → `SIXSTEP_Enable`（Hall 观察者 + Override 换相）；SPWM → `TODO(SPWM) spwm_drive`（未接入，使能为空占位）。`Motor_Init` 同样按模式分发驱动模块初始化（SPWM 构建不注册 Hall 换相观察者）。
+- **驱动使能门面（模式分发）**：FAULT / STOPPED / READY→RUNNING 三处的驱动使能/失能收敛为 `Drive_Enable()`（`motor_control.c` 私有静态），按 `MC_DRIVE_MODE`（`motor_control.h` 编译期母开关）分发：六步 → `SIXSTEP_Enable`（Hall 观察者 + Override 换相）；SPWM → `SPWM_Enable`（spwm 模块闸门：`en=true` 预置 PDC=50% 中点零矢量 + `PWM_HandOffToPwm` 交还互补自主控制，`en=false` → `PWM_AllOff`；调制链仍 `TODO(SPWM)`，RUNNING 暂不旋转）。`Motor_Init` 同样按模式分发驱动模块初始化（SPWM 构建不注册 Hall 换相观察者）。
 
 ## 六、故障管理与保护（MC_Fault）
 
@@ -243,7 +246,7 @@ ISR 置位 ─► s_fault_flags != 0 ─► Motor_Tick 读 fault=true
 
 > 另有 `PWM_SetDutyCycle(duty)`：三相同步写 PDC1/2/3（纯寄存器操作，不维护软件影子），由 `mc_ramp` 缓变调用 + `MC_Ramp_ForceZero` 归零。它与上表三原语同属 `pwm_common`，是占空比写入的唯一入口。
 >
-> SPWM 原语已预留于 `pwm_common`（寄存器所有权不变）：`PWM_HPWM_LPWM`（互补自主控制模式）、`PWM_SetDutyPhase` / `PWM_SetDuty_UVW`（三相独立/同步写 PDC）、`PWM_HandOffToPwm`（交还互补自主控制）。其中 `PWM_SetDuty_UVW` 已由状态机 BOOTSTRAP 态消费（SPWM PWM 充电占空预置）；其余待 `spwm_drive` 接入（`TODO(SPWM)`，见 §四 驱动模式母开关）。
+> SPWM 原语已就位于 `pwm_common`（寄存器所有权不变）：`PWM_HPWM_LPWM`（互补自主控制模式）、`PWM_SetDutyPhase` / `PWM_SetDuty_UVW`（三相独立/同步写 PDC）、`PWM_HandOffToPwm`（交还互补自主控制）。已消费：`PWM_SetDuty_UVW`（BOOTSTRAP 充电占空预置 + `SPWM_Enable` 零矢量预置）、`PWM_HandOffToPwm`（`SPWM_Enable(en=true)` SPWM 交接）。`PWM_SetDutyPhase` 待调制链（spwm 模块：`SPWM_SetAmplitude` 幅值汇点 + 50us tick θ 积分）接入消费（`TODO(SPWM)`，见 §四 驱动模式母开关）。
 
 ## 八、Hall 换相调用链（ISR 驱动）
 
@@ -454,7 +457,7 @@ Hello_MCC.X/
 | 故障保护 | Hall_Invalid_Timeout | 霍尔双重保护：`HALL_INVALID`（ISR 内连续确认 000/111）+ `HALL_TIMEOUT`（L2 运行中信号丢失 500ms） | `hall_speed_fdbk` / `MC_Fault` |
 | 故障通信/可视化 | Fault_Protocol_Indicator | UART 推(边沿 FAULT_NOTIFY)+拉(查询)混合 + 现场无串口时 LED3 编码闪烁（闪 N 次=bit N，常亮=bit0 过温） | `mc_protocol` / `mc_fault_indicator` |
 | UI 输入/命令模型 | Button_Cmd_Model | 按键 UI(短按启停/长按清故障) + DirectCommand 一次性命令(状态机消费即清零)；新增 READY 待速态(自举充完后等旋钮,30s 超时停机) | `mc_button` / `motor_control` |
-| 模式开关 | Drive_Mode_Switch | 六步/SPWM 编译期母开关(`MC_DRIVE_MODE`, 电机层 motor_control.h) + `Drive_Enable` 门面分发 + 启动期自检全部 VERIFY 阻断(频率/配对/CAM/TRGDIV)；频率自检内联 main.c(bsp_freq.c 删除)；SPWM 驱动接入 TODO(spwm_drive) | `motor_control` / `main.c` / `bsp_freq.h` |
+| 模式开关 | Drive_Mode_Switch | 六步/SPWM 编译期母开关(`MC_DRIVE_MODE`, 电机层 motor_control.h) + `Drive_Enable` 门面分发 + 启动期自检全部 VERIFY 阻断(频率/配对/CAM/TRGDIV)；频率自检内联 main.c(bsp_freq.c 删除)；SPWM 使能闸门 SPWM_Enable 已接入(spwm 模块，对称 SIXSTEP_Enable)，调制链(SPWM_SetAmplitude 幅值汇点+θ积分)接入 TODO | `motor_control` / `main.c` / `bsp_freq.h` |
 
 **演进中确立的关键设计决策**：
 
