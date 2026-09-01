@@ -10,8 +10,9 @@
  * 状态机(故障模式):
  *   FLASH_ON --200ms--> FLASH_OFF --(未够 N 次)--> FLASH_ON
  *                       FLASH_OFF --(够 N 次)----> SETTLE
- *   SETTLE   --1200ms-> 推进到下一置位故障位(末位回绕) -> FLASH_ON
- *   故障集变化 -> 从最低位重扫 -> FLASH_ON
+ *   SOLID    --1200ms-> SETTLE (bit0 过温常亮槽;唯一故障则持续常亮)
+ *   SETTLE   --1200ms-> 推进到下一置位故障位(末位回绕) -> FLASH_ON/SOLID
+ *   故障集变化 -> 从最低位重扫 -> FLASH_ON/SOLID
  *
  * 心跳职责：LED0(main.c 500ms 翻转),本模块无故障时保持 LED3 熄灭。
  */
@@ -25,12 +26,14 @@
 #define IND_FLASH_ON_MS      200u    /* 单次闪烁亮时长 */
 #define IND_FLASH_OFF_MS     200u    /* 单次闪烁灭时长 */
 #define IND_SETTLE_MS        1200u   /* 同一故障组之间的沉降间隔 */
+#define IND_SOLID_ON_MS      1200u   /* 常亮槽时长(过温 bit0),与沉降间隔同节奏 */
 
 /* ---- 状态机相位 ---- */
 typedef enum {
     IND_FLASH_ON,     /* 闪烁亮 */
     IND_FLASH_OFF,    /* 闪烁灭(组内) */
     IND_SETTLE,       /* 故障组之间沉降 */
+    IND_SOLID,        /* 常亮槽(bit0 过温,0 次闪烁) */
 } IndState_t;
 
 /* ---- 模块状态(仅主循环 1ms 分支访问,无 ISR 竞态) ---- */
@@ -46,13 +49,13 @@ typedef struct {
 
 static FaultInd_t s_ctx = {.state = IND_FLASH_ON,};
 
-/* 单 bit 故障 -> 闪烁次数 = 位号 + 1。
- * 规则:闪 N 次 = bit(N-1),工人可直觉推断,无需背表。
- * 从 single_bit(2的幂)右移数位号,最多 6 次循环(bit6 = OVER_TEMP -> 7 次)。 */
-//比如0b0010，bit1=1,count=2。以此类推bit2=1,count=3
+/* 单 bit 故障 -> 闪烁次数 = 位号;bit0(OVER_TEMP) -> 0 次 = 常亮(IND_SOLID)。
+ * 规则:闪 N 次 = bit N,常亮 = bit0 过温;工人可直觉推断,无需背表。
+ * 从 single_bit(2的幂)右移数位号,最多 5 次循环(bit6 = HALL_TIMEOUT -> 6 次)。 */
+//比如0b0100，bit2=1,count=2。以此类推bit5=1,count=5;bit0=1,count=0(常亮)
 static uint8_t MOTOR_SECTION fault_to_flash_count(uint16_t single_bit)
 {
-    uint8_t count = 1u;   /* bit0 -> 1 次;single_bit=0 也兜底为 1 次(理论上不发生) */
+    uint8_t count = 0u;   /* bit0 -> 0 次 = 常亮;single_bit=0 也兜底为 0(理论上不发生) */
     while (single_bit > 1u) {
         single_bit >>= 1;
         count++;
@@ -113,11 +116,11 @@ void MOTOR_SECTION MCFaultIndicator_Tick1ms(void)
         s_ctx.last_fault  = fault;
 		//lowest_set_bit:比如0b0110, & 0b1001+1 = 0b0110&0b1010=0b0010
         s_ctx.current_bit = lowest_set_bit(fault);
-		//比如0b0010，bit1=1,count=2。以此类推bit2=1,count=3
+		//比如0b0100，bit2=1,count=2；0b0001，bit0=1,count=0(常亮)
         s_ctx.flash_count = fault_to_flash_count(s_ctx.current_bit);
         s_ctx.flash_done  = 0;
         s_ctx.phase_ms    = 0;
-        s_ctx.state       = IND_FLASH_ON;
+        s_ctx.state       = (s_ctx.flash_count != 0u) ? IND_FLASH_ON : IND_SOLID;
         LED_On(LED3);
         return;   /* 本拍只切换,下拍起计时 */
     }
@@ -146,6 +149,18 @@ void MOTOR_SECTION MCFaultIndicator_Tick1ms(void)
             }
             break;
 
+        case IND_SOLID:
+            if (s_ctx.phase_ms >= IND_SOLID_ON_MS) {
+                s_ctx.phase_ms = 0;
+                /* 常亮槽(bit0)结束:仅 bit0 一项故障则清零重计时持续常亮;
+                 * 还有其他故障则灭灯进沉降,由 SETTLE 推进到下一故障位 */
+                if (next_set_bit(s_ctx.last_fault, s_ctx.current_bit) != 0u) {
+                    LED_Off(LED3);
+                    s_ctx.state = IND_SETTLE;
+                }
+            }
+            break;
+
         case IND_SETTLE:
             if (s_ctx.phase_ms >= IND_SETTLE_MS) {
                 s_ctx.phase_ms = 0;
@@ -156,7 +171,7 @@ void MOTOR_SECTION MCFaultIndicator_Tick1ms(void)
                 s_ctx.flash_count = fault_to_flash_count(s_ctx.current_bit);
                 s_ctx.flash_done  = 0;
                 LED_On(LED3);
-                s_ctx.state = IND_FLASH_ON;
+                s_ctx.state = (s_ctx.flash_count != 0u) ? IND_FLASH_ON : IND_SOLID;
             }
             break;
 

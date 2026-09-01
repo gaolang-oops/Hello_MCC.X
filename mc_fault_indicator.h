@@ -11,12 +11,12 @@
  *
  * 指示策略(LED3):
  *   - 无故障:(心跳职责 LED0)
- *   - 有故障:编码闪烁轮播,每种故障对应闪烁次数:
- *       1 次 = OVER_CURRENT   2 次 = OVER_VOLTAGE   3 次 = UNDER_VOLTAGE
- *       4 次 = OVERLOAD       5 次 = HALL_INVALID   6 次 = HALL_TIMEOUT
- *       7 次 = OVER_TEMP
- *     规则:闪 N 次 = bit(N-1),可由位号直接推出。
- *     节奏: [N x (200ms亮 + 200ms灭)] + 1200ms 沉降,循环;
+ *   - 有故障:编码闪烁轮播,闪烁次数 = 故障位号:
+ *       常亮 = OVER_TEMP(bit0,0 次闪烁)
+ *       1 次 = OVER_CURRENT    2 次 = OVER_VOLTAGE   3 次 = UNDER_VOLTAGE
+ *       4 次 = OVERLOAD        5 次 = HALL_INVALID   6 次 = HALL_TIMEOUT
+ *     规则:闪 N 次 = bit N,常亮 = bit0(过温),可由位号直接推出,无需背表。
+ *     节奏: 常亮槽 1200ms 或 [N x (200ms亮 + 200ms灭)] + 1200ms 沉降,循环;
  *     多重故障按位序低 -> 高轮播,现场可逐项诊断。
  *
  * 实现约束:

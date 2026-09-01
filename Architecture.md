@@ -217,7 +217,7 @@ ISR 置位 ─► s_fault_flags != 0 ─► Motor_Tick 读 fault=true
 | `MC_ClearAllFaults` | 外部协议命令 / KEY2 长按(`mc_button`) | 唯一运行期全清点 |
 | `MC_ClearFault(f)` | 外部协议命令 | 单位清除（按位清，用于精确清某类故障） |
 
-**故障类型**（`MC_Fault_e` 位图，可并发记录多重故障）：`OVER_CURRENT`(bit0) / `OVER_VOLTAGE`(bit1) / `UNDER_VOLTAGE`(bit2) / `OVERLOAD`(bit3) / `HALL_INVALID`(bit4) / `HALL_TIMEOUT`(bit5) / `OVER_TEMP`(bit6)。`HALL_INVALID`/`HALL_TIMEOUT` 为新增霍尔保护位；`OVER_TEMP` 位已预留（暂无温度采样驱动）。`s_fault_flags` 为 `volatile uint16_t`。纯读/整字写（`MC_HasAnyFault`/`MC_GetFault`/`MC_ClearAllFaults`）为 16 位原子操作；`MC_SetFault`/`MC_ClearFault` 的按位读-改-写非原子，已用 `SET_AND_SAVE_CPU_IPL(7)` 关中断临界区保护（主循环/ADC ISR pri6/Hall ISR pri7 多写方并发安全，保存恢复式可重入）。
+**故障类型**（`MC_Fault_e` 位图，可并发记录多重故障）：`OVER_TEMP`(bit0) / `OVER_CURRENT`(bit1) / `OVER_VOLTAGE`(bit2) / `UNDER_VOLTAGE`(bit3) / `OVERLOAD`(bit4) / `HALL_INVALID`(bit5) / `HALL_TIMEOUT`(bit6)。`HALL_INVALID`/`HALL_TIMEOUT` 为新增霍尔保护位；`OVER_TEMP` 位已预留（暂无温度采样驱动）。LED 故障指示规则（`mc_fault_indicator`）：闪烁次数 = 位号，常亮 = bit0 过温（0 次闪烁），多重故障按位序轮播。`s_fault_flags` 为 `volatile uint16_t`。纯读/整字写（`MC_HasAnyFault`/`MC_GetFault`/`MC_ClearAllFaults`）为 16 位原子操作；`MC_SetFault`/`MC_ClearFault` 的按位读-改-写非原子，已用 `SET_AND_SAVE_CPU_IPL(7)` 关中断临界区保护（主循环/ADC ISR pri6/Hall ISR pri7 多写方并发安全，保存恢复式可重入）。
 
 **Blanking 屏蔽期**：换相后 `MC_BLANKING_US=150`（物理时长，与 PWM 频率解耦）内跳过过流检测，避免六步换相电流尖峰误触发。`BLANKING_TICKS` 由 `MC_US_TO_PWM_TICKS(MC_BLANKING_US)` 编译期派生（20kHz 下 = 3 个 50μs 周期）；改 PWM 频率时物理时长不变，tick 数自动重算。时戳源 = ADC 50μs tick；Hall ISR（优先级 7）写、ADC ISR（优先级 6）读，优先级差保证无竞态。
 
@@ -345,7 +345,7 @@ flowchart TD
 Hello_MCC.X/
 ├── main.c                      初始化mcc配置的外设->初始化Drivers中所有外设->应用初始化->分层主循环
 ├── mc_protocol.c / .h          应用层：UART 故障协议(查询/清除/边沿推送 FAULT_NOTIFY)；注册 RX 回调替代回声
-├── mc_fault_indicator.c / .h   应用层：故障 LED 编码闪烁(LED3)，闪 N 次=bit(N-1)，1ms 非阻塞状态机
+├── mc_fault_indicator.c / .h   应用层：故障 LED 编码闪烁(LED3)，闪 N 次=bit N、常亮=bit0 过温，1ms 非阻塞状态机
 ├── mc_button.c / .h            应用层：按键 UI 输入(非阻塞消抖 1ms)；KEY0 短按→START / KEY1 短按→STOP / KEY2 长按≥2s→清故障
 ├── test.c / .h                 应用层测试：DAC 正余弦波形验证(50us 时基) + 模块测试/基准(自 main.c 迁移)
 ├── user_manager.h              全局段(section)/RAM 宏 + 中断优先级获取宏 + VERIFY 自检
@@ -451,7 +451,7 @@ Hello_MCC.X/
 | 硬件时序 | Self_Priming_CAP_Charging | ① TMR3 每 10μs 触发 → 阻塞式 Delay10us/DelayMs ② 下管常通 50ms 给自举电容预充电 | 状态机 BOOTSTRAP/CHARGING + `bsp_timer` |
 | 换相算法 | 6-Step | Hall 信号 → 查表六步换相（H-PWM / L-ON 方案） | `six_step` + `hall_speed_fdbk` |
 | 故障保护 | Hall_Invalid_Timeout | 霍尔双重保护：`HALL_INVALID`（ISR 内连续确认 000/111）+ `HALL_TIMEOUT`（L2 运行中信号丢失 500ms） | `hall_speed_fdbk` / `MC_Fault` |
-| 故障通信/可视化 | Fault_Protocol_Indicator | UART 推(边沿 FAULT_NOTIFY)+拉(查询)混合 + 现场无串口时 LED3 编码闪烁（闪 N 次=bit(N-1)） | `mc_protocol` / `mc_fault_indicator` |
+| 故障通信/可视化 | Fault_Protocol_Indicator | UART 推(边沿 FAULT_NOTIFY)+拉(查询)混合 + 现场无串口时 LED3 编码闪烁（闪 N 次=bit N，常亮=bit0 过温） | `mc_protocol` / `mc_fault_indicator` |
 | UI 输入/命令模型 | Button_Cmd_Model | 按键 UI(短按启停/长按清故障) + DirectCommand 一次性命令(状态机消费即清零)；新增 READY 待速态(自举充完后等旋钮,30s 超时停机) | `mc_button` / `motor_control` |
 | 模式开关 | Drive_Mode_Switch | 六步/SPWM 编译期母开关(`MC_DRIVE_MODE`, 电机层 motor_control.h) + `Drive_Enable` 门面分发 + 启动期自检全部 VERIFY 阻断(频率/配对/CAM/TRGDIV)；频率自检内联 main.c(bsp_freq.c 删除)；SPWM 驱动接入 TODO(spwm_drive) | `motor_control` / `main.c` / `bsp_freq.h` |
 
@@ -467,5 +467,5 @@ Hello_MCC.X/
 - **过载 IIR 慢保护**（`MC_Fault_CheckOverload`）：对 Ibus 做一阶 IIR 低通（τ≈128ms），与瞬时过流（μs 级）互补 -- 堵转电流可能不超瞬时阈值却持续发热烧 MOS。超 `OVERLOAD_THRESHOLD_MA` 置 `OVERLOAD` 故障。
 - **Blanking 物理时长解耦**：`MC_BLANKING_US=150`（μs）经 `MC_US_TO_PWM_TICKS` 编译期派生为 tick 数，改 PWM 频率时屏蔽期物理时长不变。
 - **霍尔双重保护**：`HALL_INVALID`（Hall ISR 内对 000/111 连续确认 N=3 次置标志，抗换相瞬态噪声；ISR 检测/L2 响应）与 `HALL_TIMEOUT`（L2 状态机，仅 RUNNING 态，`HALL_MsSinceLastEdge` 超 500ms）互补——前者捕获三线卡死/断线，后者捕获运行中信号丢失/堵转。`CheckHall` 的 age 由调用方传入，保持 `MC_Fault → mc_services → BSP` 单向依赖。
-- **故障可视化/通信双通道**（应用层辅助模块）：`mc_protocol` 提供 UART 推(边沿 `FAULT_NOTIFY`)+拉(查询 `FAULT_RESP`)混合模型 + 清故障命令；`mc_fault_indicator` 为"无串口现场操作员"提供 LED3 编码闪烁（闪 N 次 = bit(N-1)，多重故障按位序轮播）。两者均仅主循环调用，`UartLframe_Send` 最坏阻塞 50ms 故严禁进 1ms 控制环。
+- **故障可视化/通信双通道**（应用层辅助模块）：`mc_protocol` 提供 UART 推(边沿 `FAULT_NOTIFY`)+拉(查询 `FAULT_RESP`)混合模型 + 清故障命令；`mc_fault_indicator` 为"无串口现场操作员"提供 LED3 编码闪烁（闪 N 次 = bit N，常亮 = bit0 过温，多重故障按位序轮播）。两者均仅主循环调用，`UartLframe_Send` 最坏阻塞 50ms 故严禁进 1ms 控制环。
 - **命令驱动启动 + READY 待速态**（对齐 ST MCSDK DirectCommand）：启动须显式 `MOTOR_CMD_START`（KEY0 短按/协议），不再"旋钮>0 即自启"，避免上电旋钮未归零意外启动。新增 READY 态解耦"自举完成"与"等旋钮"：CHARGING 充完即 `PWM_AllOff` 进 READY，旋钮到位才使能换相；同时把原 `MC_Delay10us(50)` 阻塞关断裕量替换为"跨拍天然裕量"（CHARGING→READY→RUNNING 至少隔 1ms），消除 1ms 控制环内的 500μs 阻塞抖动。`mc_button` 与 `mc_protocol` 同为应用层命令源，经 `Motor_SetCommand` 单一接缝下发，状态机每拍快照后清零消费（末写胜，无电平残留）。

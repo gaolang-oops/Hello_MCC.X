@@ -37,14 +37,14 @@ extern "C" {
  */
 typedef enum {
     MC_FAULT_NONE          = 0,
-    MC_FAULT_OVER_CURRENT  = (1u << 0),   /* bit0 过流：瞬时短路/堵转 */
-    MC_FAULT_OVER_VOLTAGE  = (1u << 1),   /* bit1 过压：母线电压超限 */
-    MC_FAULT_UNDER_VOLTAGE = (1u << 2),   /* bit2 欠压：母线电压过低 */
-    MC_FAULT_OVERLOAD      = (1u << 3),   /* bit3 持续过载/堵转：电流长时间超额定 */
-    MC_FAULT_HALL_INVALID  = (1u << 4),   /* bit4 霍尔非法状态(000/111)：三线卡死/供电丢失 */
-    MC_FAULT_HALL_TIMEOUT  = (1u << 5),   /* bit5 霍尔信号丢失：运行中长时间无合法跳变 */
-    MC_FAULT_OVER_TEMP     = (1u << 6),   /* bit6 过温：MOS/环境温度超限 */
-    
+    MC_FAULT_OVER_TEMP     = (1u << 0),   /* bit0 过温：MOS/环境温度超限；LED 常亮(0 次闪烁) */
+    MC_FAULT_OVER_CURRENT  = (1u << 1),   /* bit1 过流：瞬时短路/堵转；LED 闪 1 次 */
+    MC_FAULT_OVER_VOLTAGE  = (1u << 2),   /* bit2 过压：母线电压超限；LED 闪 2 次 */
+    MC_FAULT_UNDER_VOLTAGE = (1u << 3),   /* bit3 欠压：母线电压过低；LED 闪 3 次 */
+    MC_FAULT_OVERLOAD      = (1u << 4),   /* bit4 持续过载/堵转：电流长时间超额定；LED 闪 4 次 */
+    MC_FAULT_HALL_INVALID  = (1u << 5),   /* bit5 霍尔非法状态(000/111)：三线卡死/供电丢失；LED 闪 5 次 */
+    MC_FAULT_HALL_TIMEOUT  = (1u << 6),   /* bit6 霍尔信号丢失：运行中长时间无合法跳变；LED 闪 6 次 */
+
 } MC_Fault_e;
 
 /* 模块初始化：清标志（冷启动干净态）+ 经 mc_services 注册 50us 过流回调。
