@@ -100,6 +100,26 @@ static void MAIN_SECTION SelfCheck_Report(void)
     printf("[IRQ] U2TX=%u  U2RX=%u	U2E=%u\n",
            INT_PRIORITY_U2TX, INT_PRIORITY_U2RX, INT_PRIORITY_U2E);
 
+    /* 优先级相对关系校验(MCC GUI 配置兜底)：
+     * dsPIC33 同优先级不嵌套，严格 >/< 才保证抢占关系。
+     *   SPWM    : AD1 最高(调制 tick 零抖动)，Hall 延迟由 IC 硬件时戳兜底
+     *   SIXSTEP : IC 最高(Hall 边沿 = 换相时刻)
+     *   T3(IC 捕获时基) 恒低于电机中断，不得反抢
+     */
+    if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM) {
+        VERIFY(INT_PRIORITY_AD1 > INT_PRIORITY_IC1);
+        VERIFY(INT_PRIORITY_AD1 > INT_PRIORITY_IC2);
+        VERIFY(INT_PRIORITY_AD1 > INT_PRIORITY_IC3);
+    } else if (MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP) {
+        VERIFY(INT_PRIORITY_IC1 > INT_PRIORITY_AD1);
+        VERIFY(INT_PRIORITY_IC2 > INT_PRIORITY_AD1);
+        VERIFY(INT_PRIORITY_IC3 > INT_PRIORITY_AD1);
+    }
+    VERIFY(INT_PRIORITY_T3 < INT_PRIORITY_AD1);
+    VERIFY(INT_PRIORITY_T3 < INT_PRIORITY_IC1);
+    VERIFY(INT_PRIORITY_T3 < INT_PRIORITY_IC2);
+    VERIFY(INT_PRIORITY_T3 < INT_PRIORITY_IC3);
+
     /* PWM 自检报告 */
     printf("[PWM] align = %s  CAM reg = %u\n",
            BSP_PWM_ALIGNMENT ? "Center-Aligned" : "Edge-Aligned",

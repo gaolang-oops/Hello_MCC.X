@@ -62,17 +62,17 @@ void INTERRUPT_Initialize (void)
     //    Priority: 2
         IPC7bits.U2RXIP = 2;
     //    ADI: ADC1 Convert Done
-    //    Priority: 6
-        IPC3bits.AD1IP = 6;
+    //    Priority: 7
+        IPC3bits.AD1IP = 7;
     //    ICI_INT: Input Compare 1
-    //    Priority: 7
-        IPC0bits.IC1IP = 7;
+    //    Priority: 6
+        IPC0bits.IC1IP = 6;
     //    ICI_INT: Input Capture 3
-    //    Priority: 7
-        IPC9bits.IC3IP = 7;
+    //    Priority: 6
+        IPC9bits.IC3IP = 6;
     //    ICI_INT: Input Capture 2
-    //    Priority: 7
-        IPC1bits.IC2IP = 7;
+    //    Priority: 6
+        IPC1bits.IC2IP = 6;
     //    TI: Timer 3
     //    Priority: 5
         IPC2bits.T3IP = 5;

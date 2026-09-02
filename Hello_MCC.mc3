@@ -1388,7 +1388,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="ADC1" registerAlias="ADI" settingAlias="priority"/>
-         <value>6</value>
+         <value>7</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="CVR" name="CMP1Dependency"/>
@@ -1752,7 +1752,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="IC1" registerAlias="ICI_INT" settingAlias="priority"/>
-         <value>7</value>
+         <value>6</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="IC2" name="IC2_ICI_INTISRFunction"/>
@@ -2020,7 +2020,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="IC2" registerAlias="ICI_INT" settingAlias="priority"/>
-         <value>7</value>
+         <value>6</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="IC3" name="IC3_ICI_INTISRFunction"/>
@@ -2288,7 +2288,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="IC3" registerAlias="ICI_INT" settingAlias="priority"/>
-         <value>7</value>
+         <value>6</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="ICD" name="customICS"/>
@@ -14962,7 +14962,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files\adc1.h</file>
-         <hash>30bfe5f450e514055900b48da66f445323145d38e447215d20e523f2b32641d1</hash>
+         <hash>bd981e9f1fbf39e9f1e3b3e0a9fa404a078c2b7818c1414c3df86af2159ccd97</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\adc_module_features.h</file>
@@ -15010,7 +15010,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files\interrupt_manager.c</file>
-         <hash>61a09c1956ab1d23d068591f5ab10134b5d84de8c340f07701865511ab59b171</hash>
+         <hash>d275ef809a0ee743ac5bcc6aba47b7bba3c7eae5a09c05b4a1cc1103d592cf0f</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\interrupt_manager.h</file>
@@ -15022,11 +15022,11 @@
       </entry>
       <entry>
          <file>mcc_generated_files\mcc.h</file>
-         <hash>9fd03f651982db671103d9704e104708ba0216dc590a96d8301e7f7137f9c533</hash>
+         <hash>d9200de834c72cee72a5fc970a97b1350dcc7380bea3946c69b8ecb1442fb772</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\pin_manager.c</file>
-         <hash>9910e3633ff0c7e7c9729ca6eaefe1f08bdbb2fd848cbc85b06f7e142d04345e</hash>
+         <hash>771e4eee7635c8f134cfdd2e0072a992074a275acdfb539f4217f34b5d68000e</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\pin_manager.h</file>
@@ -15066,7 +15066,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files\system.c</file>
-         <hash>0274506b12448a18c26fa5181a567ef0b0af8885027bd60c3d051f533fe04eb1</hash>
+         <hash>88fdac4d223e9f4c636155b7d455bb5326c4921c64240fe713ff091099d14691</hash>
       </entry>
       <entry>
          <file>mcc_generated_files\system.h</file>

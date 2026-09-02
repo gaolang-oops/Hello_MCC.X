@@ -40,10 +40,14 @@
  *   MC_DRIVE_MODE_SIXSTEP : 六步方波换相 ↔ 边沿对齐 PWM（CAM=0, PHASE=7000, TRGDIV=1:1）
  *   MC_DRIVE_MODE_SPWM    : SPWM 正弦调制 ↔ 中心对齐 PWM（CAM=1, PHASE=3500, TRGDIV=1:2）
  *
- * !! 配对同步规则（切换本宏后须手动同步两处）!!
+ * !! 配对同步规则（切换本宏后须手动同步三处）!!
  *   1) bsp_freq.h 的 BSP_PWM_ALIGNMENT（对齐模式编译期派生：PHASE/占空满量程）
  *   2) MCC GUI（PWM 对齐模式 + 触发分频 TRGDIV）并重新生成
- *
+ *   3) MCC GUI 中断优先级（Interrupt 模块）：
+ *      SPWM    : AD1 > IC1/IC2/IC3（调制 tick 零抖动；Hall 延迟由 IC 硬件时戳兜底）
+ *      SIXSTEP : IC1/IC2/IC3 > AD1（Hall 边沿 = 换相时刻，须即时）
+ *      T3（IC 捕获时基）两模式下恒低于 AD1 与 IC1~3
+ *      main.c SelfCheck_Report 对实际 IPC 寄存器做关系校验，不满足即停机
  */
 #define MC_DRIVE_MODE_SIXSTEP   0
 #define MC_DRIVE_MODE_SPWM      1
