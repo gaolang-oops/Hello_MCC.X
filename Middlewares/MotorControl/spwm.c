@@ -2,16 +2,18 @@
  * spwm.c
  *
  * 三相正弦（SPWM）模块实现
- *   1) 正弦计算：
- *   Ua = sin(θ)
- *   Ub = sin(θ + 120°)   = SinCos16(θ + 0x5555).sin
- *   Uc = sin(θ + 240°)   = SinCos16(θ + 0xAAAA).sin
+ *   1) 正弦计算（单次查表 + 代数移相）：
+ *      r  = SinCos16(θ)                     一次查表得 (cosθ, sinθ)，Q1.15
+ *      Ua = cos(θ)
+ *      Ub = cos(θ − 120°) = −½cosθ + (√3/2)sinθ
+ *      Uc = cos(θ + 120°) = −½cosθ − (√3/2)sinθ
  *
- * 角度偏移均为 2 的幂无关量，靠 uint16 加法溢出实现 360° 回卷：
- *   θ+0x5555 与 θ+0xAAAA 在 16 位加法域内恒 ∈ [0, 65536)，无需任何分支/取模。
+ *   120°/240° 不靠角度偏移再查表，而是用同一组 (cosθ, sinθ) 线性合成：
+ *   一次查表出三相，且 V/W 相对 U 的滞后/超前关系显式（正序）。
+ *   若改用角度偏移法（SinCos16(θ ± 120°)），V/W 偏移写反则相序即反、矢量反转。
  *
- * 三相平衡：对任意 θ，Ua+Ub+Uc ≡ 0（sin 在 120° 网格上调和恒为零；
- * 查表插值引入的量化残差 < ~35 LSB，全角可忽略）。
+ * 三相平衡：对任意 θ，Ua+Ub+Uc ≡ 0（cos 在 120° 网格上调和恒为零；
+ * 定点截断/量化残差 < ~35 LSB，全角可忽略）。
  *
  * 计算部分仅含计算（归一化电压 + 占空比映射），不含寄存器写入
  * （占空比结果由调用方写 PDC）。
@@ -35,10 +37,11 @@
 /* SPWM 使能闸门（软件互锁；对称于 six_step.c 的 s_enabled） */
 static volatile bool s_enabled = false;
 /*
- * 三相相位相差120度正弦波产生
+ * 三相相位相差120度正弦波产生（正序：V 滞后 U 120°，W 超前 U 120°）
  * Ua = Cos（θ）
  * Ub = Cos（θ - 120）= -1/2 Cosθ + sqrt(3)/2 Sinθ
  * Uc = Cos（θ + 120）= -1/2 Cosθ - sqrt(3)/2 Sinθ
+ * 三相和恒为 0；反序（反转）只需把下面 ub/uc 的 ±temp 对调。
  */
 SPWM_UabcQ15_t SPWM_ComputeUabcQ15(uint16_t theta16) {
     SPWM_UabcQ15_t u;
@@ -56,9 +59,10 @@ SPWM_UabcQ15_t SPWM_ComputeUabcQ15(uint16_t theta16) {
 
 /*
  * 目标占空比配合电角度 → 三相 SPWM 占空比
- *   duty_temp = 满量程/2 + ((target_duty × cosθ) >> 16)
+ *   duty_temp = 满量程/2 + ((target_duty × u) >> 16)     u = Ua/Ub/Uc 各自代入
  *   - mulus(无符号 * 有符号) 16×16→32 单周期，算术右移 16 取积
  *   - 前置：target_duty ≤ MC_DUTY_FULLSCALE(3500)，规格内中间值 ∈ [0, 3499]，
+ *   - 中点固定 50%(1750)：u=0 时三相同为共模零矢量；u=±1 时中点 ± target_duty/2（峰峰 = target_duty）
  */
 SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty) {
     SPWM_DutyUVW_t duty_out;
