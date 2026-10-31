@@ -2,7 +2,7 @@
 
 manifest_file_version: 1.0.0
 project: Hello_MCC
-creation_date: 2026-09-02T10:18:16.538+08:00[Asia/Shanghai]
+creation_date: 2026-10-31T17:29:26.362+08:00[Asia/Shanghai]
 operating_system: Windows 10
 mcc_mode: IDE
 mcc_mode_version: v6.20
@@ -10,7 +10,7 @@ device_name: dsPIC33EP128MC506
 compiler: XC16 2.10
 mcc_version: 5.5.1
 mcc_core_version: 5.7.1
-content_manager_version: 5.0.1
+content_manager_version: 5.0.0
 is_mcc_offline: true
 is_using_prerelease_versions: false
 mcc_content_registries: https://registry.npmjs.org/

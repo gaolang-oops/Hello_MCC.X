@@ -19,7 +19,7 @@
     The generated drivers are tested against the following:
         Compiler          :  XC16 v2.10
         MPLAB             :  MPLAB X v6.05
- */
+*/
 
 /*
     (c) 2020 Microchip Technology Inc. and its subsidiaries. You may use this
@@ -41,24 +41,24 @@
 
     MICROCHIP PROVIDES THIS SOFTWARE CONDITIONALLY UPON YOUR ACCEPTANCE OF THESE
     TERMS.
- */
+*/
 
 /**
   Section: Included Files
- */
+*/
 
 #include <stdio.h>
 #include "tmr3.h"
 
 /**
  Section: File specific functions
- */
+*/
 void (*TMR3_InterruptHandler)(void) = NULL;
 void TMR3_CallBack(void);
 
 /**
   Section: Data Type Definitions
- */
+*/
 
 /** TMR Driver Hardware Instance Object
 
@@ -71,7 +71,7 @@ void TMR3_CallBack(void);
 
   Remarks:
     None.
- */
+*/
 
 typedef struct _TMR_OBJ_STRUCT
 {
@@ -86,16 +86,16 @@ static TMR_OBJ tmr3_obj;
 
 /**
   Section: Driver Interface
- */
+*/
 
 void TMR3_Initialize (void)
 {
     //TMR3 0; 
     TMR3 = 0x00;
-    //Period = 0.0000100571 s; Frequency = 70000000 Hz; PR3 10; 
-    PR3 = 0x0A;
-    //TCKPS 1:64; TON enabled; TSIDL disabled; TCS FOSC/2; TGATE disabled; 
-    T3CON = 0x8020;
+    //Period = 0.0000109714 s; Frequency = 70000000 Hz; PR3 2; 
+    PR3 = 0x02;
+    //TCKPS 1:256; TON enabled; TSIDL disabled; TCS FOSC/2; TGATE disabled; 
+    T3CON = 0x8030;
 
     if(TMR3_InterruptHandler == NULL)
     {
@@ -104,7 +104,7 @@ void TMR3_Initialize (void)
 
     IFS0bits.T3IF = false;
     IEC0bits.T3IE = true;
-
+	
     tmr3_obj.timerElapsed = false;
 
 }
@@ -120,7 +120,7 @@ void __attribute__ ( ( interrupt, no_auto_psv ) ) _T3Interrupt (  )
     // ticker is 1 -> Callback function gets called everytime this ISR executes
     if(TMR3_InterruptHandler) 
     { 
-        TMR3_InterruptHandler();
+           TMR3_InterruptHandler(); 
     }
 
     //***User Area End
@@ -160,12 +160,12 @@ uint16_t TMR3_Counter16BitGet( void )
 void __attribute__ ((weak)) TMR3_CallBack(void)
 {
     // Add your custom callback code here
-        }
+}
 
 void  TMR3_SetInterruptHandler(void (* InterruptHandler)(void))
 { 
     IEC0bits.T3IE = false;
-    TMR3_InterruptHandler = InterruptHandler;
+    TMR3_InterruptHandler = InterruptHandler; 
     IEC0bits.T3IE = true;
 }
 
@@ -193,7 +193,7 @@ void TMR3_Stop( void )
 bool TMR3_GetElapsedThenClear(void)
 {
     bool status;
-
+    
     status = tmr3_obj.timerElapsed;
 
     if(status == true)
@@ -210,9 +210,9 @@ int TMR3_SoftwareCounterGet(void)
 
 void TMR3_SoftwareCounterClear(void)
 {
-    tmr3_obj.count = 0;
+    tmr3_obj.count = 0; 
 }
 
 /**
  End of File
- */
+*/
