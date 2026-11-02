@@ -56,6 +56,12 @@ uint8_t BSP_ICx_ReadHall(void);
 typedef void (*BSP_ICx_IsrHandler_t)(void);
 void    BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler);
 
+/*
+ * 捕获 FIFO 调试轮询：主循环调用。
+ * 打印最新一次捕获的 ICxTMR 原始值和相邻 Hall 跳变的时间差。
+ */
+void    BSP_ICx_DebugPoll(void);
+
 
 #ifdef	__cplusplus
 }

@@ -10,6 +10,9 @@
  */
 
 #include "bsp_ICx.h"
+#include "ic1.h"
+#include "ic2.h"
+#include "ic3.h"
 #include "../../user_manager.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -172,19 +175,152 @@ void ICAP_SECTION BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler) {
     s_isr = handler;
 }
 
+/* ================= 捕获 FIFO 调试打印 =================
+ * 方案 B：不建软件环形缓冲，只保留“最新一次捕获”快照。
+ *
+ * dt = 本次捕获值与上一次任意通道捕获值的差值，
+ *      对应相邻两个 Hall 跳变，也就是 60° 电角度的时间差。
+ *
+ * ISR 更新快照并递增 s_seq；主循环发现 s_seq 变化后打印最新值。
+ * 主循环来不及打印时，只显示最后一次捕获，不保留历史。
+ */
+#define BSP_ICX_CAPTURE_DEBUG   1
+
+#if BSP_ICX_CAPTURE_DEBUG
+
+static volatile uint8_t  s_last_ch;
+static volatile uint8_t  s_last_first;
+static volatile uint8_t  s_last_ovf;
+static volatile uint16_t s_last_val;
+static volatile uint16_t s_last_dt;
+static volatile uint16_t s_seq;
+
+static uint16_t s_prev_val = 0u;
+static bool     s_have_prev = false;
+
+static void ICAP_SECTION IC_CaptureStore(uint8_t ch, uint16_t val, bool ovf)
+{
+    s_last_ch  = ch;
+    s_last_val = val;
+    s_last_ovf = ovf ? 1u : s_last_ovf;
+
+    if (s_have_prev) {
+        s_last_first = 0u;
+        s_last_dt = (uint16_t)(val - s_prev_val);
+    } else {
+        s_last_first = 1u;
+        s_last_dt = 0u;
+    }
+
+    s_prev_val = val;
+    s_have_prev = true;
+    s_seq++;
+}
+
+static void ICAP_SECTION IC_CaptureDrain(uint8_t idx)
+{
+    bool ovf;
+    uint16_t v;
+
+    switch (idx) {
+        case IC1_IDX:
+            ovf = IC1_HasCaptureBufferOverflowed();
+            while (!IC1_IsCaptureBufferEmpty()) {
+                v = IC1_CaptureDataRead();
+                IC_CaptureStore(IC1_IDX, v, ovf);
+                ovf = false;
+            }
+            break;
+
+        case IC2_IDX:
+            ovf = IC2_HasCaptureBufferOverflowed();
+            while (!IC2_IsCaptureBufferEmpty()) {
+                v = IC2_CaptureDataRead();
+                IC_CaptureStore(IC2_IDX, v, ovf);
+                ovf = false;
+            }
+            break;
+
+        case IC3_IDX:
+            ovf = IC3_HasCaptureBufferOverflowed();
+            while (!IC3_IsCaptureBufferEmpty()) {
+                v = IC3_CaptureDataRead();
+                IC_CaptureStore(IC3_IDX, v, ovf);
+                ovf = false;
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+#endif /* BSP_ICX_CAPTURE_DEBUG */
+
+/*
+ * BSP_ICx_DebugPoll
+ * 主循环调用：发现新捕获就打印最新一次快照。
+ * 方案 B 不保留历史，主循环来不及打印时只显示最后一次。
+ */
+void ICAP_SECTION BSP_ICx_DebugPoll(void)
+{
+#if BSP_ICX_CAPTURE_DEBUG
+    static uint16_t s_seen_seq = 0u;
+    uint16_t seq = s_seq;
+    uint8_t ch;
+    uint8_t first;
+    uint8_t ovf;
+    uint16_t val;
+    uint16_t dt;
+
+    if (seq == s_seen_seq) {
+        return;
+    }
+    s_seen_seq = seq;
+
+    ch    = s_last_ch;
+    first = s_last_first;
+    ovf   = s_last_ovf;
+    val   = s_last_val;
+    dt    = s_last_dt;
+    s_last_ovf = 0u;
+
+    if (first) {
+        printf("IC%u v=%u FIRST\r\n",
+               (unsigned)(ch + 1u), (unsigned)val);
+    } else {
+        uint32_t us = ((uint32_t)dt * 3657UL) / 1000UL;
+        printf("IC%u v=%u dt=%u us=%lu%s\r\n",
+               (unsigned)(ch + 1u), (unsigned)val,
+               (unsigned)dt, (unsigned long)us,
+               ovf ? " OVF" : "");
+    }
+#endif
+}
+
 /*
  * IC ISR 强覆盖（压制 MCC ic1/2/3.c 中的弱符号）。
  * 三路中断触发同一 handler；未注册时 no-op。
+ * 调试开启时，Hall 逻辑后顺手排空对应通道 FIFO。
  */
 void ICAP_SECTION IC1_CallBack(void) {
     if (s_isr) s_isr();
+#if BSP_ICX_CAPTURE_DEBUG
+    IC_CaptureDrain(IC1_IDX);
+#endif
 }
 
 void ICAP_SECTION IC2_CallBack(void) {
     if (s_isr) s_isr();
+#if BSP_ICX_CAPTURE_DEBUG
+    IC_CaptureDrain(IC2_IDX);
+#endif
 }
 
 void ICAP_SECTION IC3_CallBack(void) {
     if (s_isr) s_isr();
+#if BSP_ICX_CAPTURE_DEBUG
+    IC_CaptureDrain(IC3_IDX);
+#endif
 }
 

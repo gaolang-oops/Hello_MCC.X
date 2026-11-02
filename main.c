@@ -154,6 +154,23 @@ static void MAIN_SECTION SelfCheck_Report(void)
 		printf("[MODE] new drive = %d\n", MC_DRIVE_MODE);
 		VERIFY(0); /* 未知驱动模式:阻断停机,程序不得继续运行 */
 	}
+
+    /* IC 捕获时基静态报告：
+     * T3CLK = Fcy/256 = 273437Hz -> 3657ns/tick。
+     */
+    {
+        static const uint16_t t3div[4] = {1u, 8u, 64u, 256u};
+        uint32_t fcy     = CLOCK_InstructionFrequencyGet();
+        uint16_t div     = t3div[T3CONbits.TCKPS & 3u];
+        uint32_t t3clk   = fcy / (uint32_t)div;
+        uint32_t tick_ns = 1000000000UL / t3clk;
+
+        printf("[IC] T3CLK = %lu Hz, tick = %lu ns (%lu.%03lu us)\n",
+               (unsigned long)t3clk, (unsigned long)tick_ns,
+               (unsigned long)(tick_ns / 1000UL),
+               (unsigned long)(tick_ns % 1000UL));
+
+    }
 }
 
 /*
@@ -228,6 +245,7 @@ int MAIN_SECTION main(void) {
          * UART 帧解析,收到上位机信息触发回调处理[无任务时迅速空转回到 Tier-2 检查] */
         UartLframe_Process();
         MCProtocol_PollFault();   /* 故障边沿,设备主动推送到上位机(须在 UartLframe_Process 之后) */
+        BSP_ICx_DebugPoll();      /* 捕获 FIFO 调试打印(只保留最新一次) */
 
         /* ===== Tier-2 控制层(1ms,与 PWM/ADC 同步) =====
          * 状态机 + 缓变 + 故障裁决。ADC ISR 置 flag,主循环消费。
@@ -245,7 +263,7 @@ int MAIN_SECTION main(void) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
 
-#if 1 /* 调试块:每 500ms 调用,Debug_Report 内部 10s 分频打印(0=关闭) */
+#if 0 /* 调试块:每 500ms 调用,Debug_Report 内部 10s 分频打印(0=关闭) */
             Debug_Report();
 #endif
         }
