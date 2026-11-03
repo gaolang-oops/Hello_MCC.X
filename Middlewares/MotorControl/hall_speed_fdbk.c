@@ -10,6 +10,7 @@
  *   - 独占 hall_status 变量
  *   - 经 mc_services 注册 IC ISR 处理函数（去抖 + 事件上抛）
  *   - 通过观察者回调 HALL_RegisterOnEdge() 向上层(drive)通知 Hall 跳变
+ *   - 由相邻 Hall 跳变判别旋转方向
  *   - 种子初始化，避免冷启动 hall_status=0
  *
  * 依赖方向：hall_speed_fdbk -> mc_services -> bsp_ICx
@@ -23,6 +24,40 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+/* ---- 转子电角度表（brad16：0~65535 ⇔ 0~360°） ----
+ * 表项含义：进入该 Hall 状态的瞬间，转子所处的电角度（扇区进入沿）。
+ *
+ * Hall 组合值 bit2=U(IC1) bit1=V(IC2) bit0=W(IC3)。
+ * 正转: 5[210°] -> 4[270°] -> 6[330°] -> 2[30°] -> 3[90°] -> 1[150°]
+ * 反转: 1[210°] -> 3[150°] -> 2[90°] -> 6[30°] -> 4[330°] -> 5[270°]
+
+ * 0/7 为非法 Hall 态，填 HALL_ANGLE_INVALID。
+ */
+#define HALL_ANGLE_DEG(d)  ((uint16_t)(((uint32_t)(d) * 65536u + 180u) / 360u))
+#define HALL_ANGLE_60      10923u   /* 60°(brad16)，相邻 Hall 扇区的角度差 */
+
+static const uint16_t s_hall_angle_fwd[8] = {
+    [0] = HALL_ANGLE_INVALID,
+    [1] = HALL_ANGLE_DEG(150),
+    [2] = HALL_ANGLE_DEG(30),
+    [3] = HALL_ANGLE_DEG(90),
+    [4] = HALL_ANGLE_DEG(270),
+    [5] = HALL_ANGLE_DEG(210),
+    [6] = HALL_ANGLE_DEG(330),
+    [7] = HALL_ANGLE_INVALID,
+};
+
+static const uint16_t s_hall_angle_rev[8] = {
+    [0] = HALL_ANGLE_INVALID,
+    [1] = HALL_ANGLE_DEG(210),
+    [2] = HALL_ANGLE_DEG(90),
+    [3] = HALL_ANGLE_DEG(150),
+    [4] = HALL_ANGLE_DEG(330),
+    [5] = HALL_ANGLE_DEG(270),
+    [6] = HALL_ANGLE_DEG(30),
+    [7] = HALL_ANGLE_INVALID,
+};
+
 /* ---- 霍尔非法状态确认参数(对齐 ST bSpeedErrorNumber 连续确认模式) ----
  * 去抖通过后仍为 000/111 视为一次"非法事件",连续 N 次才报 HALL_INVALID 故障。
  * 抗换相瞬间霍尔线瞬态噪声产生的短促 0/7;任何合法(1~6)去抖读即重置计数。 */
@@ -33,6 +68,11 @@
  */
 static volatile uint8_t hall_status;
 
+/* 实测方向：由 HALL_UpdateDirection 在每次合法 Hall 跳变后更新。
+ * s_prev_hall 仅 ISR 访问，用于计算相邻跳变在正转角度表上的差值。 */
+static volatile HALL_Dir_e s_dir = HALL_DIR_FWD;
+static volatile uint8_t    s_prev_hall = 0u;
+
 /* 最近一次合法 Hall 边沿的时间戳(ms)。供测速/堵转检测使用。
  * 写方: HALL_OnIsr(IC ISR 优先级7);读方: Tier-2 主循环(优先级0)。volatile uint16_t 原子。 */
 static volatile uint16_t s_last_edge_tick_ms = 0;
@@ -41,6 +81,7 @@ static volatile uint16_t s_last_edge_tick_ms = 0;
 static volatile HallEdgeCallback_t s_on_edge = NULL;
 
 static bool HALL_UpdateInputState(void);
+static void HALL_UpdateDirection(uint8_t hall);
 static void HALL_OnIsr(void);
 
 /*
@@ -98,6 +139,9 @@ void HALL_Init(void) {
      * 此处全局中断尚未开启，HALL_UpdateInputState 为纯轮询读，安全。 */
     HALL_UpdateInputState();
 
+    /* 建立判向基准：首个合法跳变即可由 prev->cur 角度差判方向 */
+    s_prev_hall = hall_status;
+
     /* 注册 IC ISR 处理函数：边沿中断经 BSP 桥 -> mc_services -> 本函数 */
     MC_Hall_RegisterIsr(HALL_OnIsr);
 }
@@ -108,6 +152,27 @@ uint8_t HALL_GetHallStatus(void) {
 
 void HALL_RegisterOnEdge(HallEdgeCallback_t cb) {
     s_on_edge = cb;
+}
+
+HALL_Dir_e HALL_GetDirection(void) {
+    return s_dir;   /* volatile 单字读取原子 */
+}
+
+void HALL_SetDirection(HALL_Dir_e dir) {
+    /* 静止/启动时用命令方向做种子；运行后由 Hall 沿自动覆盖。
+     * 与 Hall ISR 并发：单字写，原子。 */
+    s_dir = dir;
+}
+
+uint16_t HALL_GetHallRotorPosition(void) {
+    uint8_t hall = hall_status;
+    const uint16_t *table;
+
+    if (hall > 7u) {
+        return HALL_ANGLE_INVALID;   /* 防御性钳位 */
+    }
+    table = (s_dir == HALL_DIR_REV) ? s_hall_angle_rev : s_hall_angle_fwd;
+    return table[hall];   /* 0/7 表项为 HALL_ANGLE_INVALID */
 }
 
 uint16_t HALL_GetSpeedRpm(void) {
@@ -132,11 +197,51 @@ void HALL_ResetEdgeTimer(void) {
 }
 
 /*
+ * HALL_UpdateDirection
+ * 直接查正转角度表：相邻合法 Hall 状态的角度差为 +60°（正转）或
+ * -60°（反转）。差值 ±120° 表示漏掉一个 Hall 沿，仍可判向。
+ *
+ * 例：正转 1[150°] -> 5[210°]，delta = fwd[5]-fwd[1] = +60°；
+ *     反转 5[210°] -> 1[150°]（查正转表），delta = -60°。
+ *
+ * 仅在 ISR 内、HALL_UpdateInputState 返回 true 后调用。
+ */
+static void HALL_UpdateDirection(uint8_t hall) {
+    uint8_t  prev = s_prev_hall;
+    uint16_t ang_prev;
+    uint16_t ang_cur;
+    int16_t  delta;
+
+    s_prev_hall = hall;
+    if (hall == prev) {
+        return;
+    }
+
+    ang_prev = s_hall_angle_fwd[prev];
+    ang_cur  = s_hall_angle_fwd[hall];
+    if (ang_prev == HALL_ANGLE_INVALID || ang_cur == HALL_ANGLE_INVALID) {
+        return;   /* 基准非法（尚未建立种子）或当前非法，无法判向 */
+    }
+
+    /* brad16 环形相减：+60° -> +10922/10923，-60° -> 负值 */
+    delta = (int16_t)(uint16_t)(ang_cur - ang_prev);
+
+    if (delta > 0 && delta <= (int16_t)(2u * HALL_ANGLE_60)) {
+        s_dir = HALL_DIR_FWD;   /* +60° 或 +120°（漏一个沿） */
+    } else if (delta < 0 && delta >= -(int16_t)(2u * HALL_ANGLE_60)) {
+        s_dir = HALL_DIR_REV;   /* -60° 或 -120°（漏一个沿） */
+    }
+    /* 其余（接近 180° 或更大跳变）：方向不确定，保持上次方向 */
+}
+
+/*
  * HALL_OnIsr
  * IC 边沿中断统一入口（经 BSP ICx 桥转发）：去抖成功 -> 上抛事件给 drive。
  */
 static void HALL_OnIsr(void) {
     if (HALL_UpdateInputState()) {
+        /* 先更新方向，回调方（six_step/SPWM）才能拿到本次跳变后的方向 */
+        HALL_UpdateDirection(hall_status);
         s_last_edge_tick_ms = MC_GetTickMs();   /* 记时戳,供测速/堵转检测 */
         if (s_on_edge) s_on_edge(hall_status);
     }

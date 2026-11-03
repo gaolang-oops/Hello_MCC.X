@@ -245,7 +245,6 @@ int MAIN_SECTION main(void) {
          * UART 帧解析,收到上位机信息触发回调处理[无任务时迅速空转回到 Tier-2 检查] */
         UartLframe_Process();
         MCProtocol_PollFault();   /* 故障边沿,设备主动推送到上位机(须在 UartLframe_Process 之后) */
-        BSP_ICx_DebugPoll();      /* 捕获 FIFO 调试打印(只保留最新一次) */
 
         /* ===== Tier-2 控制层(1ms,与 PWM/ADC 同步) =====
          * 状态机 + 缓变 + 故障裁决。ADC ISR 置 flag,主循环消费。
@@ -262,6 +261,27 @@ int MAIN_SECTION main(void) {
         if (BSP_ADC_TimeBase_Is500msFlag()) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
+
+            /* 方向 / Hall 转子位置调试打印（500ms 一次）。
+             * pos 是当前 Hall 扇区“进入沿”的绝对电角度(brad16)，不是实时连续角。 */
+            {
+                uint8_t hall = HALL_GetHallStatus();
+                HALL_Dir_e dir = HALL_GetDirection();
+                uint16_t pos = HALL_GetHallRotorPosition();
+
+                if (pos == HALL_ANGLE_INVALID) {
+                    printf("[HALL] hall=%u dir=%s pos=INVALID\n",
+                           (unsigned)hall,
+                           (dir == HALL_DIR_FWD) ? "FWD" : "REV");
+                } else {
+                    /* brad16 -> 度（+32768 四舍五入，避免 210° 显示成 209°） */
+                    uint16_t deg = (uint16_t)((((uint32_t)pos * 360u) + 32768u) >> 16);
+                    printf("[HALL] hall=%u dir=%s pos=%u deg (0x%04X)\n",
+                           (unsigned)hall,
+                           (dir == HALL_DIR_FWD) ? "FWD" : "REV",
+                           (unsigned)deg, (unsigned)pos);
+                }
+            }
 
 #if 0 /* 调试块:每 500ms 调用,Debug_Report 内部 10s 分频打印(0=关闭) */
             Debug_Report();
