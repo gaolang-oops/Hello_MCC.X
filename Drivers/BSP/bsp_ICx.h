@@ -37,6 +37,12 @@
 extern "C" {
 #endif
 
+/* 捕获通道编号（与 Hall U/V/W 对应） */
+#define BSP_ICX_CH_U    0u  /* IC1 / Hall U */
+#define BSP_ICX_CH_V    1u  /* IC2 / Hall V */
+#define BSP_ICX_CH_W    2u  /* IC3 / Hall W */
+
+
 /* IC 硬件初始化：GPIO/PPS/ICxCON/IEC */
 void BSP_ICx_HW_Init(void);
 
@@ -49,18 +55,24 @@ void BSP_ICx_HW_Init(void);
 uint8_t BSP_ICx_ReadHall(void);
 
 /*
+ * 捕获数据上抛回调（IC 中断上下文）：
+ *   ch  = BSP_ICX_CH_U / V / W
+ *   cap = ICxTMR 原始捕获值（当前 T3CLK=1:256，3657ns/tick）
+ *   ovf = 1：该值读出前 FIFO 已溢出；0：正常
+ *
+ * 每个从 ICx FIFO 读出的值调用一次。
+ * 注册应在全局中断使能前完成。
+ */
+typedef void (*BSP_ICx_CaptureHandler_t)(uint8_t ch, uint16_t cap, uint8_t ovf);
+void    BSP_ICx_RegisterCaptureHandler(BSP_ICx_CaptureHandler_t handler);
+
+/*
  * IC ISR 桥：BSP 拥有 IC1/2/3_CallBack 强覆盖（压制 MCC 弱符号），
  * 上层经此注册统一处理函数；三路 IC 中断触发同一 handler（无 idx 区分）。
  * 注册前若偶发 Hall 沿，handler 为 NULL 时 no-op。
  */
 typedef void (*BSP_ICx_IsrHandler_t)(void);
 void    BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler);
-
-/*
- * 捕获 FIFO 调试轮询：主循环调用。
- * 打印最新一次捕获的 ICxTMR 原始值和相邻 Hall 跳变的时间差。
- */
-void    BSP_ICx_DebugPoll(void);
 
 
 #ifdef	__cplusplus

@@ -86,11 +86,26 @@ uint16_t MC_GetKnobSpeed(void);
 
 /* ============ Hall ============ */
 
+/* 捕获通道编号（与 BSP 的 IC1/IC2/IC3 对应） */
+#define MC_HALL_CH_U    0u  /* IC1 / Hall U */
+#define MC_HALL_CH_V    1u  /* IC2 / Hall V */
+#define MC_HALL_CH_W    2u  /* IC3 / Hall W */
+
 /* 读 3 路 Hall 引脚电平（bit2=U bit1=V bit0=W）。去抖 / 合法态判断由消费方负责 */
 uint8_t MC_Hall_ReadStatus(void);
 
 /* 注册 IC ISR 统一处理函数（三路 IC 中断触发同一 handler） */
 void MC_Hall_RegisterIsr(void (*handler)(void));
+
+/*
+ * 注册捕获数据上抛回调（IC 中断上下文，必须短小）：
+ *   ch  = MC_HALL_CH_U / V / W
+ *   cap = ICxTMR 原始捕获值（当前 T3CLK=1:256，3657ns/tick）
+ *   ovf = 1：该值读出前 FIFO 已溢出
+ * 每个从 ICx FIFO 读出的值调用一次。
+ */
+typedef void (*MC_HallCaptureHandler_t)(uint8_t ch, uint16_t cap, uint8_t ovf);
+void MC_Hall_RegisterCaptureHandler(MC_HallCaptureHandler_t handler);
 
 #ifdef __cplusplus
 }

@@ -68,3 +68,7 @@ void MC_Hall_RegisterIsr(void (*handler)(void)) {
     BSP_ICx_RegisterIsrHandler(handler);
 }
 
+void MC_Hall_RegisterCaptureHandler(MC_HallCaptureHandler_t handler) {
+    BSP_ICx_RegisterCaptureHandler((BSP_ICx_CaptureHandler_t)handler);
+}
+
