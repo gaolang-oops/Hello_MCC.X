@@ -4,8 +4,8 @@
  *
  * Created on 2026年5月21日, 下午7:53
  *
- * 纯硬件适配层：仅 IC 寄存器配置(GPIO/PPS/ICxCON/IEC) + 调试 LED 显示。
- * Hall 解码、hall_status、ISR 回调逻辑已迁至 hall_speed_fdbk.c（单一 owner）。
+ * 纯硬件适配层：IC 寄存器配置(GPIO/PPS/ICxCON/IEC) + 捕获 FIFO。
+ * Hall 解码、hall_status、dt/角度等语义逻辑在 hall_speed_fdbk.c（单一 owner）。
  * 本文件零 Middlewares 依赖。
  */
 
@@ -15,7 +15,7 @@
 #include "ic3.h"
 #include "../../user_manager.h"
 #include <stdbool.h>
-#include <stdio.h>
+#include <stddef.h>   /* NULL */
 
 /*
  * IC捕捉模块是边沿触发，既只能知道是否发生了边沿跳变事件，
@@ -39,9 +39,6 @@ typedef enum {
 
 /* ISR 桥：上层注册的统一处理函数（NULL = 未注册，no-op） */
 static volatile BSP_ICx_IsrHandler_t s_isr = NULL;
-
-/* 捕获数据上抛回调：每读出一个 ICx FIFO 值调用一次（ISR 上下文） */
-static volatile BSP_ICx_CaptureHandler_t s_capture_handler = NULL;
 
 
 // 输入捕捉 硬件资源结构体
@@ -179,85 +176,86 @@ void ICAP_SECTION BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler) {
 }
 
 /*
- * BSP_ICx_RegisterCaptureHandler
- * 注册捕获数据上抛回调。
- * 每个从 ICx FIFO 读出的值都会调用一次：
- *   ch  = 0/1/2 -> IC1/IC2/IC3 (Hall U/V/W)
- *   cap = ICxTMR 原始捕获值（3.657us/tick，与 T3CLK 同源）
- *   ovf = 该值读出前 FIFO 已溢出（1）或正常（0）
+ * IC_CaptureReadLatest
+ * 排空指定通道 FIFO，只返回最新一次捕获值。
  *
- * 回调在 IC 中断上下文执行，必须短小。
- * 注册应在全局中断使能前完成。
+ * 返回本次排空出的捕获个数（0/1/2...）。
+ * ovf 输出（仅在返回值 >0 时有意义）：
+ *   1 = FIFO 硬件溢出，或本次排空出多个值（说明 CPU 延迟导致边沿积压，
+ *       最新 cap 与当前 Hall 引脚状态不一定对应同一次边沿）
+ *   0 = 恰好一个待处理捕获，cap 与本次引脚状态可信
+ *
+ * 排空动作本身必须做，否则 FIFO 会满/丢后续边沿。
  */
-void ICAP_SECTION BSP_ICx_RegisterCaptureHandler(BSP_ICx_CaptureHandler_t handler) {
-    s_capture_handler = handler;
-}
-
-/*
- * 捕获数据分发：上抛给 motor 层注册的 capture handler（生产路径）
- */
-static void ICAP_SECTION IC_CaptureDispatch(uint8_t ch, uint16_t val, bool ovf)
+static uint8_t ICAP_SECTION IC_CaptureReadLatest(uint8_t idx, uint16_t *cap, uint8_t *ovf)
 {
-    if (s_capture_handler) {
-        s_capture_handler(ch, val, ovf ? 1u : 0u);
-    }
-}
-
-static void ICAP_SECTION IC_CaptureDrain(uint8_t idx)
-{
-    bool ovf;
-    uint16_t v;
+    uint16_t v = 0u;
+    uint8_t  n = 0u;
+    bool     hw_ovf = false;
 
     switch (idx) {
         case IC1_IDX:
-            ovf = IC1_HasCaptureBufferOverflowed();
+            hw_ovf = IC1_HasCaptureBufferOverflowed();
             while (!IC1_IsCaptureBufferEmpty()) {
                 v = IC1_CaptureDataRead();
-                IC_CaptureDispatch(IC1_IDX, v, ovf);
-                ovf = false;
+                n++;
             }
             break;
 
         case IC2_IDX:
-            ovf = IC2_HasCaptureBufferOverflowed();
+            hw_ovf = IC2_HasCaptureBufferOverflowed();
             while (!IC2_IsCaptureBufferEmpty()) {
                 v = IC2_CaptureDataRead();
-                IC_CaptureDispatch(IC2_IDX, v, ovf);
-                ovf = false;
+                n++;
             }
             break;
 
         case IC3_IDX:
-            ovf = IC3_HasCaptureBufferOverflowed();
+            hw_ovf = IC3_HasCaptureBufferOverflowed();
             while (!IC3_IsCaptureBufferEmpty()) {
                 v = IC3_CaptureDataRead();
-                IC_CaptureDispatch(IC3_IDX, v, ovf);
-                ovf = false;
+                n++;
             }
             break;
 
         default:
             break;
     }
+
+    *cap = v;
+    *ovf = (hw_ovf || (n > 1u)) ? 1u : 0u;
+    return n;   /* 0：FIFO 为空（偶发中断），调用方不应把它当成一次边沿 */
 }
 
 /*
  * IC ISR 强覆盖（压制 MCC ic1/2/3.c 中的弱符号）。
- * 三路中断触发同一 handler；未注册时 no-op。
- * 调试开启时，Hall 逻辑后顺手排空对应通道 FIFO。
+ * 先排空对应通道 FIFO 拿到硬件时戳，再交给上层统一 handler。
+ * 顺序很重要：上层去抖读引脚时，cap 已经可用；只有去抖接受的边沿才使用它。
  */
 void ICAP_SECTION IC1_CallBack(void) {
-    if (s_isr) s_isr();
-    IC_CaptureDrain(IC1_IDX);
+    uint16_t cap;
+    uint8_t  ovf;
+
+    if (IC_CaptureReadLatest(IC1_IDX, &cap, &ovf) != 0u && s_isr) {
+        s_isr((uint8_t)IC1_IDX, cap, ovf);
+    }
 }
 
 void ICAP_SECTION IC2_CallBack(void) {
-    if (s_isr) s_isr();
-    IC_CaptureDrain(IC2_IDX);
+    uint16_t cap;
+    uint8_t  ovf;
+
+    if (IC_CaptureReadLatest(IC2_IDX, &cap, &ovf) != 0u && s_isr) {
+        s_isr((uint8_t)IC2_IDX, cap, ovf);
+    }
 }
 
 void ICAP_SECTION IC3_CallBack(void) {
-    if (s_isr) s_isr();
-    IC_CaptureDrain(IC3_IDX);
+    uint16_t cap;
+    uint8_t  ovf;
+
+    if (IC_CaptureReadLatest(IC3_IDX, &cap, &ovf) != 0u && s_isr) {
+        s_isr((uint8_t)IC3_IDX, cap, ovf);
+    }
 }
 

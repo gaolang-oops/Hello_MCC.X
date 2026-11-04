@@ -262,12 +262,15 @@ int MAIN_SECTION main(void) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
 
-            /* 方向 / Hall 转子位置调试打印（500ms 一次）。
-             * pos 是当前 Hall 扇区“进入沿”的绝对电角度(brad16)，不是实时连续角。 */
+            /* 方向 / Hall 转子位置 / 60° dt 调试打印（500ms 一次）。
+             * pos 是当前 Hall 扇区“进入沿”的绝对电角度(brad16)，不是实时连续角。
+             * dt 是最近一次有效跨通道 60° 间隔（T3CLK tick，3657ns/tick），
+             * 0 表示尚未建立；停机后旧值保留，需结合 age 判断新鲜度。 */
             {
                 uint8_t hall = HALL_GetHallStatus();
                 HALL_Dir_e dir = HALL_GetDirection();
                 uint16_t pos = HALL_GetHallRotorPosition();
+                uint16_t dt = HALL_GetEdgeDtTicks();
 
                 if (pos == HALL_ANGLE_INVALID) {
                     printf("[HALL] hall=%u dir=%s pos=INVALID\n",
@@ -280,6 +283,13 @@ int MAIN_SECTION main(void) {
                            (unsigned)hall,
                            (dir == HALL_DIR_FWD) ? "FWD" : "REV",
                            (unsigned)deg, (unsigned)pos);
+                }
+                if (dt == 0u) {
+                    printf("[HALL] dt60=0 (not established)\n");
+                } else {
+                    uint32_t dt_us = ((uint32_t)dt * 3657UL) / 1000UL;
+                    printf("[HALL] dt60=%u ticks (%lu us)\n",
+                           (unsigned)dt, (unsigned long)dt_us);
                 }
             }
 

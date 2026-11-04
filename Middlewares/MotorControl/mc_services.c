@@ -64,11 +64,7 @@ uint8_t MC_Hall_ReadStatus(void) {
     return BSP_ICx_ReadHall();
 }
 
-void MC_Hall_RegisterIsr(void (*handler)(void)) {
+void MC_Hall_RegisterIsr(MC_HallIsrHandler_t handler) {
     BSP_ICx_RegisterIsrHandler(handler);
-}
-
-void MC_Hall_RegisterCaptureHandler(MC_HallCaptureHandler_t handler) {
-    BSP_ICx_RegisterCaptureHandler((BSP_ICx_CaptureHandler_t)handler);
 }
 

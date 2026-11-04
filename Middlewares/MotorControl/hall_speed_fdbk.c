@@ -9,6 +9,8 @@
  * 职责（硬件单一 owner）：
  *   - 独占 hall_status 变量
  *   - 经 mc_services 注册 IC ISR 处理函数（去抖 + 事件上抛）
+ *   - 接收 BSP 排空 FIFO 后的最新捕获值，在去抖接受的边沿上计算
+ *     跨通道 60° 间隔 dt（相邻合法 Hall 跳变 = 60° 电角度）
  *   - 通过观察者回调 HALL_RegisterOnEdge() 向上层(drive)通知 Hall 跳变
  *   - 由相邻 Hall 跳变判别旋转方向
  *   - 种子初始化，避免冷启动 hall_status=0
@@ -68,21 +70,46 @@ static const uint16_t s_hall_angle_rev[8] = {
  */
 static volatile uint8_t hall_status;
 
-/* 实测方向：由 HALL_UpdateDirection 在每次合法 Hall 跳变后更新。
- * s_prev_hall 仅 ISR 访问，用于计算相邻跳变在正转角度表上的差值。 */
+/* 实测方向：由 HALL_UpdateDirection 在每次合法 Hall 跳变后更新。*/
 static volatile HALL_Dir_e s_dir = HALL_DIR_FWD;
+/* s_prev_hall 仅 ISR 访问，用于计算相邻跳变在正转角度表上的差值。 */
 static volatile uint8_t    s_prev_hall = 0u;
 
 /* 最近一次合法 Hall 边沿的时间戳(ms)。供测速/堵转检测使用。
  * 写方: HALL_OnIsr(IC ISR 优先级7);读方: Tier-2 主循环(优先级0)。volatile uint16_t 原子。 */
 static volatile uint16_t s_last_edge_tick_ms = 0;
 
+/* ---- 跨通道 60° dt 状态 ----
+ * 写方: HALL_OnIsr(IC ISR)；读方: Tier-2 主循环。
+ * dt_ticks 为最近一次有效 60° 间隔（T3CLK tick），volatile 单字读取原子；
+ * 本次捕获溢出/积压/不合理时保留旧值，消费方用 HALL_MsSinceLastEdge() 判新鲜度。
+ * prev_cap/prev_hall/have_prev 描述"上一次合法边沿"，必须成组推进。 */
+typedef struct {
+    volatile uint16_t dt_ticks;   /* 最近一次有效 60° dt；0=尚未建立 */
+    uint16_t prev_cap;            /* 上一次合法边沿的 ICxTMR 捕获值 */
+    uint8_t  prev_hall;           /* 上一次合法边沿的 Hall 状态 */
+    volatile bool have_prev;      /* prev_cap/prev_hall 是否有效（主循环可重置） */
+} HALL_DtState_t;
+
+static HALL_DtState_t s_dt;
+
+/* 合理性窗口（T3CLK tick，当前 3.657us/tick）：
+ *   MIN = 10 tick ≈ 36.6us -> 仅用于排除 dt=0/重复沿/明显毛刺，
+ *        不当作真实转速上限（真实上限应由电机最高电频率另定）
+ *   MAX = 60000 tick ≈ 219ms -> 接近 16 位 ICxTMR 回卷(239.7ms)，
+ *        再大无法区分"很慢"与"跨通道乱序/回卷"
+ * 低速时 dt 超出 MAX 属于正常（本方法测不到），此时不更新速度。 */
+#define HALL_DT_MIN_TICKS       10u
+#define HALL_DT_MAX_TICKS       60000u
+
 /* 观察者回调：Hall 跳变去抖成功后上抛给 drive 层（反向控制，DIP） */
 static volatile HallEdgeCallback_t s_on_edge = NULL;
 
 static bool HALL_UpdateInputState(void);
 static void HALL_UpdateDirection(uint8_t hall);
-static void HALL_OnIsr(void);
+static void HALL_ResetDt(void);
+static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf);
+static void HALL_OnIsr(uint8_t ch, uint16_t cap, uint8_t ovf);
 
 /*
  * HALL_UpdateInputState
@@ -132,6 +159,15 @@ static bool HALL_UpdateInputState(void)
     return true;
 }
 
+/* 清空 dt 状态：初始化与重启（HALL_ResetEdgeTimer）共用。
+ * 清 base 后首个合法沿只重建基准，不产生 dt。 */
+static void HALL_ResetDt(void) {
+    s_dt.dt_ticks  = 0u;
+    s_dt.prev_cap  = 0u;
+    s_dt.prev_hall = 0u;
+    s_dt.have_prev = false;
+}
+
 void HALL_Init(void) {
     /* 种子初始化：上电后主动读一次 Hall。
      * 若电机静止则无 Hall 跳变沿 -> 无中断 -> hall_status 恒为 0(非法)，
@@ -141,6 +177,9 @@ void HALL_Init(void) {
 
     /* 建立判向基准：首个合法跳变即可由 prev->cur 角度差判方向 */
     s_prev_hall = hall_status;
+
+    /* 建立 dt 基准：首个合法跳变只记录 cap，不产生 dt（无上一次边沿） */
+    HALL_ResetDt();
 
     /* 注册 IC ISR 处理函数：边沿中断经 BSP 桥 -> mc_services -> 本函数 */
     MC_Hall_RegisterIsr(HALL_OnIsr);
@@ -175,6 +214,10 @@ uint16_t HALL_GetHallRotorPosition(void) {
     return table[hall];   /* 0/7 表项为 HALL_ANGLE_INVALID */
 }
 
+uint16_t HALL_GetEdgeDtTicks(void) {
+    return s_dt.dt_ticks;   /* volatile uint16_t 单字读取原子 */
+}
+
 uint16_t HALL_GetSpeedRpm(void) {
     /* TODO: 速度计算待加速度环时实现。
      * 算法: 基于相邻两次合法 Hall 边沿的 ms 时戳差 + 极对数 POLE_PAIR_NUM 换算 RPM。
@@ -194,6 +237,10 @@ uint16_t HALL_MsSinceLastEdge(void) {
  * 并发: 主循环(pri 0)与 HALL_OnIsr(pri 7)均写当前时戳,最坏差亚毫秒,可忽略。 */
 void HALL_ResetEdgeTimer(void) {
     s_last_edge_tick_ms = MC_GetTickMs();
+
+    /* 同时丢弃旧的速度基准：重启后首个 60° 间隔必须重新建立，
+     * 防止上次运行的 dt 被当成当前速度。 */
+    HALL_ResetDt();
 }
 
 /*
@@ -235,16 +282,112 @@ static void HALL_UpdateDirection(uint8_t hall) {
 }
 
 /*
- * HALL_OnIsr
- * IC 边沿中断统一入口（经 BSP ICx 桥转发）：去抖成功 -> 上抛事件给 drive。
+ * HALL_SectorCount
+ * 由两个合法 Hall 状态在正转角度表上的差值，判断实际跨过几个 60° 扇区。
+ *   1 = 正常相邻跳变（60°）
+ *   2 = 漏掉一个 Hall 沿（120°）
+ *   0 = 非法状态/跳变 ≥180°，dt 不可用
+ * 角度表与方向无关：反转时差值取绝对值后扇区数相同。
+ * 仅在 ISR 内调用。
  */
-static void HALL_OnIsr(void) {
-    if (HALL_UpdateInputState()) {
-        /* 先更新方向，回调方（six_step/SPWM）才能拿到本次跳变后的方向 */
-        HALL_UpdateDirection(hall_status);
-        s_last_edge_tick_ms = MC_GetTickMs();   /* 记时戳,供测速/堵转检测 */
-        if (s_on_edge) s_on_edge(hall_status);
+static uint8_t HALL_SectorCount(uint8_t prev, uint8_t cur) {
+    uint16_t ang_prev;
+    uint16_t ang_cur;
+    uint16_t d;
+    uint16_t mag;
+
+    if (prev > 7u || cur > 7u || prev == cur) {
+        return 0u;
     }
+    ang_prev = s_hall_angle_fwd[prev];
+    ang_cur  = s_hall_angle_fwd[cur];
+    if (ang_prev == HALL_ANGLE_INVALID || ang_cur == HALL_ANGLE_INVALID) {
+        return 0u;
+    }
+
+    /* brad16 环形最短差值幅值：
+     * 如果使用int16(d)取负，在 180°(-32768) 处会溢出。
+     * 用min(d, 65536-d)替代，全程无符号 */
+    d   = (uint16_t)(ang_cur - ang_prev); //例：从 ang_prev[330度] 顺时针到 ang_cur[30度] 的步数
+    mag = (d <= 32768u) ? d : (uint16_t)(65536u - d);
+
+    /* 表项量化后 60° 差值为 10922/10923，120° 为 21844~21846，
+     * 直接按 1×/2× 判档即可，无需 1.5×/2.5× 的中间带。 */
+    if (mag <= HALL_ANGLE_60) {
+        return 1u;                       /* 正常相邻跳变：60° */
+    }
+    if (mag <= (2u * HALL_ANGLE_60)) {
+        return 2u;                       /* 漏一个沿：120° */
+    }
+    return 0u;                           /* ≥180°：dt 不可用 */
+}
+
+/*
+ * HALL_UpdateDt
+ * 只有去抖接受的边沿才会调用。
+ *   - ovf=1：cap 与当前 Hall 状态不保证对应同一边沿，丢弃基准，
+ *            下一沿只重建、再下一沿恢复 dt；
+ *   - 正常：dt = cap - 上一次 cap；按扇区数归一（2 个扇区右移 1 位）；
+ *   - 超窗/回卷/毛刺：保留上一次有效 dt，不覆盖。
+ */
+static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf) {
+    uint16_t dt;
+    uint8_t  sectors;
+
+    if (ovf) {
+        s_dt.have_prev = false;
+        return;
+    }
+
+    if (s_dt.have_prev) {
+        dt      = (uint16_t)(cap - s_dt.prev_cap);
+        sectors = HALL_SectorCount(s_dt.prev_hall, cur_hall);
+
+        /* sectors=2 时 dt 覆盖 120°，右移 1 位归一到 60° */
+        if (sectors != 0u &&
+            dt >= HALL_DT_MIN_TICKS && dt <= HALL_DT_MAX_TICKS) {
+            s_dt.dt_ticks = (sectors == 2u) ? (uint16_t)(dt >> 1) : dt;
+        }
+    }
+
+    /* 基准推进到本次已接受边沿：cap 与 hall 指向同一观测 */
+    s_dt.prev_cap  = cap;
+    s_dt.prev_hall = cur_hall;
+    s_dt.have_prev = true;
+}
+
+/*
+ * HALL_OnIsr
+ * IC 边沿中断统一入口（经 BSP ICx 桥转发）。
+ *
+ * BSP 已先把该通道 FIFO 排空，并把最新捕获值 cap 交进来；本函数用当前
+ * 引脚去抖结果判断这个 cap 是否对应一次真正被接受的 Hall 跳变：
+ *   - 去抖拒绝：丢弃 cap，不推进 dt 基准；
+ *   - 去抖接受：更新方向/时戳，并计算"上一次合法边沿 -> 本次"的 60° dt。
+ *
+ * 跨通道：三个 IC 的 FIFO 独立，但都在同一 ISR 优先级下按中断顺序处理；
+ * 正常运行时相邻边沿间隔远大于 ISR 延迟，cap 差值即相邻 Hall 跳变的
+ * 60° 时间。ovf=1（FIFO 溢出/积压）说明 cap 与引脚状态可能不同步，此时
+ * 丢弃 dt 基准，下一沿只重建基准、再下一沿才恢复 dt。
+ */
+static void HALL_OnIsr(uint8_t ch, uint16_t cap, uint8_t ovf) {
+    uint8_t cur_hall;
+
+    (void)ch;   /* 跨通道 dt 不区分通道；参数保留给后续按通道诊断/校准 */
+
+    if (!HALL_UpdateInputState()) {
+        return;   /* 去抖拒绝：本次捕获不是合法 Hall 跳变 */
+    }
+
+    cur_hall = hall_status;
+
+    /* 先更新方向，回调方（six_step/SPWM）才能拿到本次跳变后的方向 */
+    HALL_UpdateDirection(cur_hall);
+    s_last_edge_tick_ms = MC_GetTickMs();   /* 记时戳,供测速/堵转检测 */
+
+    HALL_UpdateDt(cap, cur_hall, ovf);
+
+    if (s_on_edge) s_on_edge(cur_hall);
 }
 
 /* TODO: 实现 HALL_GetSpeedRpm 时需定义极对数 POLE_PAIR_NUM */

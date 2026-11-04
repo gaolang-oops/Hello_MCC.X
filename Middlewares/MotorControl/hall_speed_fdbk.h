@@ -46,8 +46,14 @@ void HALL_SetDirection(HALL_Dir_e dir);
  * 返回 HALL_ANGLE_INVALID 表示当前 Hall 非法(0/7)。 */
 uint16_t HALL_GetHallRotorPosition(void);
 
+/* 最近一次有效的跨通道 60° 间隔（T3CLK tick，当前 3657ns/tick）。
+ *   每两个相邻合法 Hall 边沿更新一次；若本次捕获溢出/积压/间隔异常，
+ *   保留上一次有效值不覆盖。0 = 尚未建立或已被 ResetEdgeTimer 清零。
+ * 消费方须结合 HALL_MsSinceLastEdge() 判断数据是否新鲜（停机后旧值会保留）。 */
+uint16_t HALL_GetEdgeDtTicks(void);
+
 /* 速度反馈(速度环接缝,预留):
- * 返回电机转速 RPM,基于相邻两次合法 Hall 边沿的时间戳差换算。
+ * 返回电机转速 RPM,基于 HALL_GetEdgeDtTicks() 换算。
  * 本次仅占位返回 0,实际测速算法待加速度环时实现。
  * 消费方: Tier-2(1ms) 调用,经 MC_Ramp_SetTargetProvider 注入速度 PI 输出。 */
 uint16_t HALL_GetSpeedRpm(void);

@@ -48,30 +48,26 @@ void BSP_ICx_HW_Init(void);
 
 /*
  * Hall 引脚电平读取（去抖 / 合法态判断等 motor 域逻辑不在 BSP）。
- * 返回值位布局： bit2 = IC1 (RG8, Hall U)
+ * 返回值位布局：bit2 = IC1 (RG8, Hall U)
  *               bit1 = IC2 (RG7, Hall V)
  *               bit0 = IC3 (RG6, Hall W)
  */
 uint8_t BSP_ICx_ReadHall(void);
 
 /*
- * 捕获数据上抛回调（IC 中断上下文）：
- *   ch  = BSP_ICX_CH_U / V / W
- *   cap = ICxTMR 原始捕获值（当前 T3CLK=1:256，3657ns/tick）
- *   ovf = 1：该值读出前 FIFO 已溢出；0：正常
- *
- * 每个从 ICx FIFO 读出的值调用一次。
- * 注册应在全局中断使能前完成。
- */
-typedef void (*BSP_ICx_CaptureHandler_t)(uint8_t ch, uint16_t cap, uint8_t ovf);
-void    BSP_ICx_RegisterCaptureHandler(BSP_ICx_CaptureHandler_t handler);
-
-/*
  * IC ISR 桥：BSP 拥有 IC1/2/3_CallBack 强覆盖（压制 MCC 弱符号），
- * 上层经此注册统一处理函数；三路 IC 中断触发同一 handler（无 idx 区分）。
- * 注册前若偶发 Hall 沿，handler 为 NULL 时 no-op。
+ * 上层经此注册统一处理函数。
+ *
+ * 每次进入某个 ICx 中断时，BSP 先排空该通道 FIFO，再把本次捕获信息交给 handler：
+ *   ch  = BSP_ICX_CH_U / V / W（IC1/IC2/IC3）
+ *   cap = 该通道 FIFO 中最新一次捕获值（ICxTMR，当前 T3CLK=1:256，3657ns/tick）
+ *   ovf = 1：FIFO 溢出，或本次排空出多个待处理值（边沿丢失/积压），cap 与当前
+ *         Hall 引脚状态不再一一对应；0：只有本次一个捕获，cap 可信
+ *
+ * handler 在 IC 中断上下文执行，必须短小。注册应在全局中断使能前完成。
+ * 注册前若偶发 Hall 沿，handler 为 NULL 时只排空 FIFO，不做其他事。
  */
-typedef void (*BSP_ICx_IsrHandler_t)(void);
+typedef void (*BSP_ICx_IsrHandler_t)(uint8_t ch, uint16_t cap, uint8_t ovf);
 void    BSP_ICx_RegisterIsrHandler(BSP_ICx_IsrHandler_t handler);
 
 
