@@ -26,6 +26,23 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+/* ================= 调试：Hall ISR 耗时测量 =================
+ * LED1 = RE13，低电平点亮。示波器探头接 MCU 的 RE13 引脚，
+ * 下降沿触发，测低电平脉宽。
+ *
+ * 注意：LED_On/Off 是函数调用，开销会污染微秒级测量；这里直接写
+ * LATEbit，只有一条位写指令。测量完成后把 HALL_TIMING_DEBUG 改为 0。
+ */
+#define HALL_TIMING_DEBUG             1
+
+#if HALL_TIMING_DEBUG
+#define HALL_TIMING_BEGIN()   (_LATE13 = 0)   /* LED1 亮，低脉冲起点 */
+#define HALL_TIMING_END()     (_LATE13 = 1)   /* LED1 灭，低脉冲终点 */
+#else
+#define HALL_TIMING_BEGIN()   do {} while (0)
+#define HALL_TIMING_END()     do {} while (0)
+#endif
+
 /* ---- 转子电角度表（brad16：0~65535 ⇔ 0~360°） ----
  * 表项含义：进入该 Hall 状态的瞬间，转子所处的电角度（扇区进入沿）。
  *
@@ -375,7 +392,10 @@ static void HALL_OnIsr(uint8_t ch, uint16_t cap, uint8_t ovf) {
 
     (void)ch;   /* 跨通道 dt 不区分通道；参数保留给后续按通道诊断/校准 */
 
+    HALL_TIMING_BEGIN();
+
     if (!HALL_UpdateInputState()) {
+        HALL_TIMING_END();
         return;   /* 去抖拒绝：本次捕获不是合法 Hall 跳变 */
     }
 
@@ -386,6 +406,8 @@ static void HALL_OnIsr(uint8_t ch, uint16_t cap, uint8_t ovf) {
     s_last_edge_tick_ms = MC_GetTickMs();   /* 记时戳,供测速/堵转检测 */
 
     HALL_UpdateDt(cap, cur_hall, ovf);
+
+	HALL_TIMING_END();
 
     if (s_on_edge) s_on_edge(cur_hall);
 }
