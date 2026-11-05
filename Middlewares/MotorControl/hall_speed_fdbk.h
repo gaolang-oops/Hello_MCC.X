@@ -46,9 +46,11 @@ void HALL_SetDirection(HALL_Dir_e dir);
  * 返回 HALL_ANGLE_INVALID 表示当前 Hall 非法(0/7)。 */
 uint16_t HALL_GetHallRotorPosition(void);
 
-/* 最近一次有效的跨通道 60° 间隔（T3CLK tick，当前 3657ns/tick）。
- *   每两个相邻合法 Hall 边沿更新一次；若本次捕获溢出/积压/间隔异常，
- *   保留上一次有效值不覆盖。0 = 尚未建立或已被 ResetEdgeTimer 清零。
+/* 最近最多 6 个有效跨通道 60° 间隔的滑动平均（T3CLK tick，当前 3657ns/tick）。
+ *   每个合法 Hall 边沿更新一次；漏沿 120° 时先用 dt/2 归一到 60°；
+ *   启动阶段为已收集样本的平均，满 6 个后固定为 6 样本平均。
+ *   若本次捕获溢出/积压/间隔异常，保留上一次平均值不覆盖。
+ *   0 = 尚未建立或已被 ResetEdgeTimer 清零。
  * 消费方须结合 HALL_MsSinceLastEdge() 判断数据是否新鲜（停机后旧值会保留）。 */
 uint16_t HALL_GetEdgeDtTicks(void);
 
@@ -70,8 +72,8 @@ typedef union {
     } part;
 } HALL_StepQ16_t;
 
-/* 最近一次有效 60° dt 对应的每 PWM 角度增量（商 + 余数）。
- * 无效/溢出/超窗/尚未建立时 u32=0；方向符号尚未应用，
+/* 最近一次滑动平均 60° dt 对应的每 PWM 角度增量（商 + 余数）。
+ * 无效/溢出/超窗/尚未建立时保持上一次值；方向符号尚未应用，
  * 消费方如需带符号增量，可结合 HALL_GetDirection()。 */
 HALL_StepQ16_t HALL_GetThetaStep(void);
 

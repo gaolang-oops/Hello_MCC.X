@@ -10,7 +10,8 @@
  *   - 独占 hall_status 变量
  *   - 经 mc_services 注册 IC ISR 处理函数（去抖 + 事件上抛）
  *   - 接收 BSP 排空 FIFO 后的最新捕获值，在去抖接受的边沿上计算
- *     跨通道 60° 间隔 dt（相邻合法 Hall 跳变 = 60° 电角度）
+ *     跨通道 60° 间隔 dt（相邻合法 Hall 跳变 = 60° 电角度），
+ *     并对最近 6 个有效间隔做滑动平均
  *   - 通过观察者回调 HALL_RegisterOnEdge() 向上层(drive)通知 Hall 跳变
  *   - 由相邻 Hall 跳变判别旋转方向
  *   - 种子初始化，避免冷启动 hall_status=0
@@ -98,15 +99,27 @@ static volatile uint16_t s_last_edge_tick_ms = 0;
 
 /* ---- 跨通道 60° dt 状态 ----
  * 写方: HALL_OnIsr(IC ISR)；读方: Tier-2 主循环。
- * dt_ticks 为最近一次有效 60° 间隔（T3CLK tick），volatile 单字读取原子；
- * 本次捕获溢出/积压/不合理时保留旧值，消费方用 HALL_MsSinceLastEdge() 判新鲜度。
- * prev_cap/prev_hall/have_prev 描述"上一次合法边沿"，必须成组推进。 */
+ * dt_ticks 为最近最多 6 个有效 60° 间隔的滑动平均（T3CLK tick），
+ * 每个合法沿更新一次；满 6 个后固定为 6 样本平均。
+ * 本次捕获溢出/积压/不合理时不更新窗口，保留旧值；
+ * 消费方用 HALL_MsSinceLastEdge() 判新鲜度。
+ * prev_cap/prev_hall/have_prev 描述"上一次合法边沿"，必须成组推进。
+ */
 typedef struct {
-    volatile uint16_t dt_ticks;   /* 最近一次有效 60° dt；0=尚未建立 */
+/* 滑动平均窗口：6 个相邻 60° 间隔 = 一个电周期(360°) */
+#define HALL_DT_AVG_N           6u
+
+    volatile uint16_t dt_ticks;   /* 最近 6 个有效 60° 间隔的滑动平均；0=尚未建立 */
     volatile HALL_StepQ16_t step; /* 每 PWM 增量 16.16：高16=整数，低16=小数 */
     uint16_t prev_cap;            /* 上一次合法边沿的 ICxTMR 捕获值 */
     uint8_t  prev_hall;           /* 上一次合法边沿的 Hall 状态 */
-    volatile bool have_prev;      /* prev_cap/prev_hall 是否有效（主循环可重置） */
+    volatile bool have_prev;      /* prev_cap/prev_hall 是否有效 */
+
+    /* 60° 间隔滑动平均窗口 */
+    uint16_t hist[HALL_DT_AVG_N]; /* 最近最多 6 个有效间隔 */
+    uint32_t hist_sum;            /* hist[] 元素之和 */
+    uint8_t  hist_idx;            /* 写指针；满时指向最旧值 */
+    bool     hist_full;           /* true = 窗口已满，此后一直满 */
 } HALL_DtState_t;
 
 static HALL_DtState_t s_dt;
@@ -188,13 +201,21 @@ static bool HALL_UpdateInputState(void)
 }
 
 /* 清空 dt 状态：初始化与重启（HALL_ResetEdgeTimer）共用。
- * 清 base 后首个合法沿只重建基准，不产生 dt。 */
+ * 清 base 后首个合法沿只重建基准，不产生 dt；滑动平均窗口同时清空。 */
 static void HALL_ResetDt(void) {
+    uint16_t ipl_saved;
+
+    SET_AND_SAVE_CPU_IPL(ipl_saved, 7);
     s_dt.dt_ticks  = 0u;
     s_dt.step.u32  = 0u;
     s_dt.prev_cap  = 0u;
     s_dt.prev_hall = 0u;
     s_dt.have_prev = false;
+
+    s_dt.hist_sum  = 0u;
+    s_dt.hist_idx  = 0u;
+    s_dt.hist_full = false;
+    RESTORE_CPU_IPL(ipl_saved);
 }
 
 void HALL_Init(void) {
@@ -395,17 +416,20 @@ static void HALL_UpdateStep(uint16_t dt) {
  * HALL_UpdateDt
  * 只有去抖接受的边沿才会调用。
  *   - ovf=1：cap 与当前 Hall 状态不保证对应同一边沿，丢弃基准，
- *            下一沿只重建、再下一沿恢复 dt；
- *   - 正常：dt = cap - 上一次 cap；按扇区数归一（2 个扇区右移 1 位）；
- *   - 超窗/回卷/毛刺：保留上一次有效 dt，不覆盖；step 置 0。
+ *            下一沿只重建、再下一沿恢复 dt；窗口与平均值保持不变；
+ *   - 正常：dt = cap - 上一次 cap；扇区差 120°（漏一个沿）时 dt/2
+ *            归一到 60°，再压入 6 元素窗口，运行和更新；
+ *            均值用 __builtin_divud 求商，避免 / 运算符/库函数；
+ *   - sectors=0 / 超窗 / 回卷 / 毛刺：不更新窗口，保留上一次平均值，
+ *            不覆盖；step 也保持上一次值。
  */
 static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf) {
     uint16_t dt;
     uint8_t  sectors;
+    uint8_t  n;
 
     if (ovf) {
-        s_dt.step.u32 = 0u;
-        s_dt.have_prev = false;
+        s_dt.have_prev = false;   /* 保留窗口和上一次平均值/step */
         return;
     }
 
@@ -413,16 +437,32 @@ static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf) {
         dt      = (uint16_t)(cap - s_dt.prev_cap);
         sectors = HALL_SectorCount(s_dt.prev_hall, cur_hall);
 
-        /* sectors=2 时 dt 覆盖 120°，右移 1 位归一到 60° */
         if (sectors != 0u &&
             dt >= HALL_DT_MIN_TICKS && dt <= HALL_DT_MAX_TICKS) {
-            s_dt.dt_ticks = (sectors == 2u) ? (uint16_t)(dt >> 1) : dt;
+
+            /* 漏一个沿时 dt 覆盖 120°，右移 1 位归一到 60° 再入窗 */
+            if (sectors == 2u) {
+                dt >>= 1;
+            }
+
+            /* 运行和：满窗时先减去将被覆盖的最旧值 */
+            if (s_dt.hist_full) {
+                s_dt.hist_sum -= s_dt.hist[s_dt.hist_idx];
+            }
+            s_dt.hist[s_dt.hist_idx] = dt;
+            s_dt.hist_sum += dt;
+
+            s_dt.hist_idx++;
+            if (s_dt.hist_idx >= HALL_DT_AVG_N) {
+                s_dt.hist_idx  = 0u;
+                s_dt.hist_full = true;   /* 此后一直满 */
+            }
+
+            n = s_dt.hist_full ? HALL_DT_AVG_N : s_dt.hist_idx;
+            s_dt.dt_ticks = (uint16_t)__builtin_divud(s_dt.hist_sum, n);
             HALL_UpdateStep(s_dt.dt_ticks);
-        } else {
-            s_dt.step.u32 = 0u;
         }
-    } else {
-        s_dt.step.u32 = 0u;   /* 首个边沿，无上一次基准 */
+        /* else: sectors=0 或 dt 异常，不更新窗口/平均值，沿用上一次 */
     }
 
     /* 基准推进到本次已接受边沿：cap 与 hall 指向同一观测 */

@@ -267,8 +267,8 @@ int MAIN_SECTION main(void) {
 
             /* 方向 / Hall 转子位置 / 60° dt 调试打印（500ms 一次）。
              * pos 是当前 Hall 扇区“进入沿”的绝对电角度(brad16)，不是实时连续角。
-             * dt 是最近一次有效跨通道 60° 间隔（T3CLK tick，3657ns/tick），
-             * 0 表示尚未建立；停机后旧值保留，需结合 age 判断新鲜度。 */
+             * dt 是最近最多 6 个有效 60° 间隔的滑动平均（T3CLK tick，3657ns/tick），
+             * 每个合法沿更新一次；0 表示尚未建立；停机后旧值保留，需结合 age 判断新鲜度。 */
             {
                 uint8_t hall = HALL_GetHallStatus();
                 HALL_Dir_e dir = HALL_GetDirection();
@@ -288,10 +288,10 @@ int MAIN_SECTION main(void) {
                            (unsigned)deg, (unsigned)pos);
                 }
                 if (dt == 0u) {
-                    printf("[HALL] dt60=0 (not established)\n");
+                    printf("[HALL] dt60avg=0 (not established)\n");
                 } else {
                     uint32_t dt_us = ((uint32_t)dt * 3657UL) / 1000UL;
-                    printf("[HALL] dt60=%u ticks (%lu us)\n",
+                    printf("[HALL] dt60avg=%u ticks (%lu us)\n",
                            (unsigned)dt, (unsigned long)dt_us);
                 }
 
@@ -301,7 +301,7 @@ int MAIN_SECTION main(void) {
                     if (step.u32 == 0u) {
                         printf("[HALL] step q=0 frac=0 (not established)\n");
                     } else {
-                        printf("[HALL] step q=%u frac=%u (dt=%u)\n",
+                        printf("[HALL] step q=%u frac=%u (dtavg=%u)\n",
                                (unsigned)step.part.q,
                                (unsigned)step.part.frac,
                                (unsigned)dt);
