@@ -103,12 +103,22 @@ static volatile uint16_t s_last_edge_tick_ms = 0;
  * prev_cap/prev_hall/have_prev 描述"上一次合法边沿"，必须成组推进。 */
 typedef struct {
     volatile uint16_t dt_ticks;   /* 最近一次有效 60° dt；0=尚未建立 */
+    volatile HALL_StepQ16_t step; /* 每 PWM 增量 16.16：高16=整数，低16=小数 */
     uint16_t prev_cap;            /* 上一次合法边沿的 ICxTMR 捕获值 */
     uint8_t  prev_hall;           /* 上一次合法边沿的 Hall 状态 */
     volatile bool have_prev;      /* prev_cap/prev_hall 是否有效（主循环可重置） */
 } HALL_DtState_t;
 
 static HALL_DtState_t s_dt;
+
+/* K = (65536/6) * (Fcy / (256 * Fpwm))
+ *   = 149333（dt=1 tick 时的 brad16 增量）
+ * 依赖：_XTAL_FREQ、BSP_PWM_FREQUENCY_HZ、T3 TCKPS=1:256。
+ * 改时钟/PWM 频率/T3 预分频时须同步 HALL_T3_PRESCALER。
+ * 编译期 64 位常量折叠，无运行时开销。 */
+#define HALL_T3_PRESCALER   256UL
+#define HALL_STEP_K  ((uint32_t)((65536ULL * (_XTAL_FREQ / 2ULL)) / \
+                                 (6ULL * HALL_T3_PRESCALER * BSP_PWM_FREQUENCY_HZ)))
 
 /* 合理性窗口（T3CLK tick，当前 3.657us/tick）：
  *   MIN = 10 tick ≈ 36.6us -> 仅用于排除 dt=0/重复沿/明显毛刺，
@@ -125,6 +135,7 @@ static volatile HallEdgeCallback_t s_on_edge = NULL;
 static bool HALL_UpdateInputState(void);
 static void HALL_UpdateDirection(uint8_t hall);
 static void HALL_ResetDt(void);
+static void HALL_UpdateStep(uint16_t dt);
 static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf);
 static void HALL_OnIsr(uint8_t ch, uint16_t cap, uint8_t ovf);
 
@@ -180,6 +191,7 @@ static bool HALL_UpdateInputState(void)
  * 清 base 后首个合法沿只重建基准，不产生 dt。 */
 static void HALL_ResetDt(void) {
     s_dt.dt_ticks  = 0u;
+    s_dt.step.u32  = 0u;
     s_dt.prev_cap  = 0u;
     s_dt.prev_hall = 0u;
     s_dt.have_prev = false;
@@ -233,6 +245,16 @@ uint16_t HALL_GetHallRotorPosition(void) {
 
 uint16_t HALL_GetEdgeDtTicks(void) {
     return s_dt.dt_ticks;   /* volatile uint16_t 单字读取原子 */
+}
+
+HALL_StepQ16_t HALL_GetThetaStep(void) {
+    /* 32 位快照非原子；调试/主循环读取时可能被 Hall ISR 打断。
+     * 正式消费方若要求一致性，应加临界区或序号保护。 */
+    return s_dt.step;
+}
+
+uint32_t HALL_GetStepK(void) {
+    return HALL_STEP_K;
 }
 
 uint16_t HALL_GetSpeedRpm(void) {
@@ -340,18 +362,49 @@ static uint8_t HALL_SectorCount(uint8_t prev, uint8_t cur) {
 }
 
 /*
+ * HALL_UpdateStep
+ * dt 有效时计算每 PWM 周期的角度增量，发布成真正的 16.16：
+ *   q    = K / dt                  （整数 brad16/PWM）
+ *   rem  = K % dt
+ *   frac = (rem << 16) / dt        （低 16 位，1/65536 brad16）
+ * 第一次用 __builtin_divmodud 拿商和余数；第二次用 __builtin_divud
+ * 把余数换算成 16 位小数。两者都是 native 32/16 除法。
+ * 约束：商必须能放进 16 位；dt >= HALL_DT_MIN_TICKS=10 时
+ *       q <= 149333/10 = 14933，满足。
+ * 方向符号暂不应用，消费方按 HALL_GetDirection() 处理。
+ */
+static void HALL_UpdateStep(uint16_t dt) {
+    uint16_t rem;
+    uint16_t q;
+    uint16_t frac;
+
+    if (dt == 0u) {
+        s_dt.step.u32 = 0u;
+        return;
+    }
+
+    q    = __builtin_divmodud(HALL_STEP_K, dt, &rem);
+    frac = __builtin_divud((uint32_t)rem << 16, dt);
+
+    /* dsPIC33E 小端：part.frac 是 u32 低 16 位，part.q 是高 16 位 */
+    s_dt.step.part.q    = q;
+    s_dt.step.part.frac = frac;
+}
+
+/*
  * HALL_UpdateDt
  * 只有去抖接受的边沿才会调用。
  *   - ovf=1：cap 与当前 Hall 状态不保证对应同一边沿，丢弃基准，
  *            下一沿只重建、再下一沿恢复 dt；
  *   - 正常：dt = cap - 上一次 cap；按扇区数归一（2 个扇区右移 1 位）；
- *   - 超窗/回卷/毛刺：保留上一次有效 dt，不覆盖。
+ *   - 超窗/回卷/毛刺：保留上一次有效 dt，不覆盖；step 置 0。
  */
 static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf) {
     uint16_t dt;
     uint8_t  sectors;
 
     if (ovf) {
+        s_dt.step.u32 = 0u;
         s_dt.have_prev = false;
         return;
     }
@@ -364,7 +417,12 @@ static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf) {
         if (sectors != 0u &&
             dt >= HALL_DT_MIN_TICKS && dt <= HALL_DT_MAX_TICKS) {
             s_dt.dt_ticks = (sectors == 2u) ? (uint16_t)(dt >> 1) : dt;
+            HALL_UpdateStep(s_dt.dt_ticks);
+        } else {
+            s_dt.step.u32 = 0u;
         }
+    } else {
+        s_dt.step.u32 = 0u;   /* 首个边沿，无上一次基准 */
     }
 
     /* 基准推进到本次已接受边沿：cap 与 hall 指向同一观测 */

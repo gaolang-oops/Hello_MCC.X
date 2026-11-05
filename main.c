@@ -169,8 +169,11 @@ static void MAIN_SECTION SelfCheck_Report(void)
                (unsigned long)t3clk, (unsigned long)tick_ns,
                (unsigned long)(tick_ns / 1000UL),
                (unsigned long)(tick_ns % 1000UL));
-
     }
+
+    /* Hall 每 PWM 角度增量常数 K = (65536/6)*(Fcy/(256*Fpwm))
+     * 当前配置（Fcy=70MHz、Fpwm=20kHz、T3 1:256）应为 149333。 */
+    printf("[HALL] step K = %lu\n", (unsigned long)HALL_GetStepK());
 }
 
 /*
@@ -290,6 +293,19 @@ int MAIN_SECTION main(void) {
                     uint32_t dt_us = ((uint32_t)dt * 3657UL) / 1000UL;
                     printf("[HALL] dt60=%u ticks (%lu us)\n",
                            (unsigned)dt, (unsigned long)dt_us);
+                }
+
+                /* 每 PWM 增量 16.16：高16=整数 brad16，低16=1/65536 小数 */
+                {
+                    HALL_StepQ16_t step = HALL_GetThetaStep();
+                    if (step.u32 == 0u) {
+                        printf("[HALL] step q=0 frac=0 (not established)\n");
+                    } else {
+                        printf("[HALL] step q=%u frac=%u (dt=%u)\n",
+                               (unsigned)step.part.q,
+                               (unsigned)step.part.frac,
+                               (unsigned)dt);
+                    }
                 }
             }
 
