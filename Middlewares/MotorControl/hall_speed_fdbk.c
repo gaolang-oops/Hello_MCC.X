@@ -142,6 +142,13 @@ static HALL_DtState_t s_dt;
 #define HALL_DT_MIN_TICKS       10u
 #define HALL_DT_MAX_TICKS       60000u
 
+/* 最高转速限幅：4000 rpm @ p=2。
+ * dt_limit = 10*T3CLK/(rpm*p)
+ *          = 2,734,375/(4000*2) = 341.8 -> 342 tick（向上取整）。
+ * 342 tick ≈ 3997.6 rpm，保证钳位后不超过 4000 rpm。
+ * 低于此值时把 dt_ticks 钳到 342，HALL_UpdateStep 的 step 也随之受限。 */
+#define HALL_DT_MAX_SPEED_TICKS 342u
+
 /* 观察者回调：Hall 跳变去抖成功后上抛给 drive 层（反向控制，DIP） */
 static volatile HallEdgeCallback_t s_on_edge = NULL;
 
@@ -403,7 +410,7 @@ static void HALL_UpdateStep(uint16_t dt) {
         s_dt.step.u32 = 0u;
         return;
     }
-
+	// 如果除数为零，会导致mcu复位
     q    = __builtin_divmodud(HALL_STEP_K, dt, &rem);
     frac = __builtin_divud((uint32_t)rem << 16, dt);
 
@@ -460,6 +467,12 @@ static void HALL_UpdateDt(uint16_t cap, uint8_t cur_hall, uint8_t ovf) {
 
             n = s_dt.hist_full ? HALL_DT_AVG_N : s_dt.hist_idx;
             s_dt.dt_ticks = (uint16_t)__builtin_divud(s_dt.hist_sum, n);
+
+            /* 最高转速钳位：dt 不小于 342 tick（4000 rpm @ p=2） */
+            if (s_dt.dt_ticks < HALL_DT_MAX_SPEED_TICKS) {
+                s_dt.dt_ticks = HALL_DT_MAX_SPEED_TICKS;
+            }
+
             HALL_UpdateStep(s_dt.dt_ticks);
         }
         /* else: sectors=0 或 dt 异常，不更新窗口/平均值，沿用上一次 */
