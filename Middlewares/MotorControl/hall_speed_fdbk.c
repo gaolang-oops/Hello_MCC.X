@@ -337,7 +337,6 @@ static void HALL_UpdateDirection(uint8_t hall) {
         return;   /* 基准非法（尚未建立种子）或当前非法，无法判向 */
     }
 
-    /* brad16 环形相减：+60° -> +10922/10923，-60° -> 负值 */
     delta = (int16_t)(uint16_t)(ang_cur - ang_prev);
 
     if (delta > 0 && delta <= (int16_t)(2u * HALL_ANGLE_60)) {
@@ -372,10 +371,7 @@ static uint8_t HALL_SectorCount(uint8_t prev, uint8_t cur) {
         return 0u;
     }
 
-    /* brad16 环形最短差值幅值：
-     * 如果使用int16(d)取负，在 180°(-32768) 处会溢出。
-     * 用min(d, 65536-d)替代，全程无符号 */
-    d   = (uint16_t)(ang_cur - ang_prev); //例：从 ang_prev[330度] 顺时针到 ang_cur[30度] 的步数
+    d   = (uint16_t)(ang_cur - ang_prev);
     mag = (d <= 32768u) ? d : (uint16_t)(65536u - d);
 
     /* 表项量化后 60° 差值为 10922/10923，120° 为 21844~21846，
