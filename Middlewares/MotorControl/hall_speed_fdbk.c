@@ -110,7 +110,7 @@ typedef struct {
 #define HALL_DT_AVG_N           6u
 
     volatile uint16_t dt_ticks;   /* 最近 6 个有效 60° 间隔的滑动平均；0=尚未建立 */
-    volatile HALL_StepQ16_t step; /* 每 PWM 增量 16.16：高16=整数，低16=小数 */
+    volatile HALL_StepQ16_t step; /* 每 PWM 增量 16.16（有符号）：正转正、反转负 */
     uint16_t prev_cap;            /* 上一次合法边沿的 ICxTMR 捕获值 */
     uint8_t  prev_hall;           /* 上一次合法边沿的 Hall 状态 */
     volatile bool have_prev;      /* prev_cap/prev_hall 是否有效 */
@@ -214,7 +214,7 @@ static void HALL_ResetDt(void) {
 
     SET_AND_SAVE_CPU_IPL(ipl_saved, 7);
     s_dt.dt_ticks  = 0u;
-    s_dt.step.u32  = 0u;
+    s_dt.step      = 0;
     s_dt.prev_cap  = 0u;
     s_dt.prev_hall = 0u;
     s_dt.have_prev = false;
@@ -399,24 +399,31 @@ static uint8_t HALL_SectorCount(uint8_t prev, uint8_t cur) {
  * 把余数换算成 16 位小数。两者都是 native 32/16 除法。
  * 约束：商必须能放进 16 位；dt >= HALL_DT_MIN_TICKS=10 时
  *       q <= 149333/10 = 14933，满足。
- * 方向符号暂不应用，消费方按 HALL_GetDirection() 处理。
+ * 方向符号在此应用：正转 -> 正值，反转 -> 负值（二进制补码）。
+ * 消费方统一 theta_u32 += (uint32_t)s_dt.step 即可。
  */
 static void HALL_UpdateStep(uint16_t dt) {
     uint16_t rem;
     uint16_t q;
     uint16_t frac;
+    int32_t  step;
 
     if (dt == 0u) {
-        s_dt.step.u32 = 0u;
+        s_dt.step = 0;
         return;
     }
 	// 如果除数为零，会导致mcu复位
     q    = __builtin_divmodud(HALL_STEP_K, dt, &rem);
     frac = __builtin_divud((uint32_t)rem << 16, dt);
 
-    /* dsPIC33E 小端：part.frac 是 u32 低 16 位，part.q 是高 16 位 */
-    s_dt.step.part.q    = q;
-    s_dt.step.part.frac = frac;
+    /* 先拼成正的 16.16 幅值，再按方向取负（补码）。
+     * 幅值上界：dt >= HALL_DT_MIN_TICKS=10 -> q <= 14933，
+     * 故 step < 0x3A560000，转 int32_t 绝不会溢出。 */
+    step = (int32_t)(((uint32_t)q << 16) | frac);
+    if (s_dir == HALL_DIR_REV) {
+        step = -step;
+    }
+    s_dt.step = step;
 }
 
 /*

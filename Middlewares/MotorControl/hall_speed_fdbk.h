@@ -56,27 +56,23 @@ uint16_t HALL_GetHallRotorPosition(void);
  * 消费方须结合 HALL_MsSinceLastEdge() 判断数据是否新鲜（停机后旧值会保留）。 */
 uint16_t HALL_GetEdgeDtTicks(void);
 
-/* 每 PWM 周期电角度增量（16.16）：高 16 位整数 / 低 16 位小数。
+/* 每 PWM 周期电角度增量（16.16 定点，有符号）：
+ *   高 16 位 = 整数 brad16/PWM，低 16 位 = 1/65536 brad16 小数。
+ *   正转 > 0，反转 < 0（二进制补码）。
  *
- *   part.q    = K / dt                     （整数 brad16 / PWM）
- *   part.frac = (K % dt) * 65536 / dt      （低 16 位，1/65536 brad16）
+ * 累加必须用无符号累加器：theta_u32 += (uint32_t)step;
+ *   —— 有符号加法溢出是 C 的未定义行为；无符号加法则是模 2^32 的良定义回卷。
  *
- * 即 part.u32 是一个真正的 16.16 定点数：
- *   step = part.q + part.frac / 65536   [brad16 / PWM]
- *
- * dsPIC33E 为小端：struct 中 frac 在前 = u32 的低 16 位。
+ * 需要拆整数/小数时：whole = step >> 16; frac = step & 0xFFFFu;
+ *   负数时 whole 是向下取整（floor），frac 恒为非负的小数部分，
+ *   即 value = whole + frac/65536。
  */
-typedef union {
-    uint32_t u32;
-    struct {
-        uint16_t frac;  /* 低 16 位：1/65536 brad16 小数 */
-        uint16_t q;     /* 高 16 位：整数 brad16 / PWM */
-    } part;
-} HALL_StepQ16_t;
+typedef int32_t HALL_StepQ16_t;
 
-/* 钳位后的滑动平均 60° dt 对应的每 PWM 角度增量（商 + 余数）。
- * 无效/溢出/超窗/尚未建立时保持上一次值；方向符号尚未应用，
- * 消费方如需带符号增量，可结合 HALL_GetDirection()。 */
+/* 钳位后的滑动平均 60° dt 对应的每 PWM 角度增量（16.16，已应用方向符号）。
+ *   正转 -> 正值，反转 -> 负值（二进制补码）。
+ *   消费方统一 theta_u32 += (uint32_t)step 即可。
+ *   无效/溢出/超窗/尚未建立时保持上一次值。 */
 HALL_StepQ16_t HALL_GetThetaStep(void);
 
 /* 调试用：返回每 PWM 角度增量公式中的常数 K（brad16 每 T3 tick）。

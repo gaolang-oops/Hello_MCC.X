@@ -295,15 +295,14 @@ int MAIN_SECTION main(void) {
                            (unsigned)dt, (unsigned long)dt_us);
                 }
 
-                /* 每 PWM 增量 16.16：高16=整数 brad16，低16=1/65536 小数 */
+                /* 每 PWM 增量 16.16（有符号）：正转正、反转负 */
                 {
                     HALL_StepQ16_t step = HALL_GetThetaStep();
-                    if (step.u32 == 0u) {
-                        printf("[HALL] step q=0 frac=0 (not established)\n");
+                    if (step == 0) {
+                        printf("[HALL] step=0 (not established)\n");
                     } else {
-                        printf("[HALL] step q=%u frac=%u (dtavg=%u)\n",
-                               (unsigned)step.part.q,
-                               (unsigned)step.part.frac,
+                        printf("[HALL] step=%ld (dtavg=%u)\n",
+                               (long)step,
                                (unsigned)dt);
                     }
                 }
