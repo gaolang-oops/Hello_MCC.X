@@ -266,25 +266,30 @@ int MAIN_SECTION main(void) {
             LED_Toggle(LED0);
 
             /* 方向 / Hall 转子位置 / 60° dt 调试打印（500ms 一次）。
-             * pos 是当前 Hall 扇区“进入沿”的绝对电角度(brad16)，不是实时连续角。
+             * cmd  = 命令方向（决定 step 符号）；meas = Hall 实测方向（仅监督）。
+             * pos  = 当前 Hall 扇区“进入沿”的绝对电角度(brad16)，按命令方向选表，
+             *        与 step 同一参考系，供 theta 重同步使用。
              * dt 是最近最多 6 个有效 60° 间隔的滑动平均（T3CLK tick，3657ns/tick），
              * 每个合法沿更新一次；0 表示尚未建立；停机后旧值保留，需结合 age 判断新鲜度。 */
             {
                 uint8_t hall = HALL_GetHallStatus();
-                HALL_Dir_e dir = HALL_GetDirection();
+                HALL_Dir_e dir_cmd  = HALL_GetCmdDirection();
+                HALL_Dir_e dir_meas = HALL_GetMeasuredDirection();
                 uint16_t pos = HALL_GetHallRotorPosition();
                 uint16_t dt = HALL_GetEdgeDtTicks();
 
                 if (pos == HALL_ANGLE_INVALID) {
-                    printf("[HALL] hall=%u dir=%s pos=INVALID\n",
+                    printf("[HALL] hall=%u cmd=%s meas=%s pos=INVALID\n",
                            (unsigned)hall,
-                           (dir == HALL_DIR_FWD) ? "FWD" : "REV");
+                           (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
+                           (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV");
                 } else {
                     /* brad16 -> 度（+32768 四舍五入，避免 210° 显示成 209°） */
                     uint16_t deg = (uint16_t)((((uint32_t)pos * 360u) + 32768u) >> 16);
-                    printf("[HALL] hall=%u dir=%s pos=%u deg (0x%04X)\n",
+                    printf("[HALL] hall=%u cmd=%s meas=%s pos=%u deg (0x%04X)\n",
                            (unsigned)hall,
-                           (dir == HALL_DIR_FWD) ? "FWD" : "REV",
+                           (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
+                           (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV",
                            (unsigned)deg, (unsigned)pos);
                 }
                 if (dt == 0u) {
@@ -295,7 +300,7 @@ int MAIN_SECTION main(void) {
                            (unsigned)dt, (unsigned long)dt_us);
                 }
 
-                /* 每 PWM 增量 16.16（有符号）：正转正、反转负 */
+                /* 每 PWM 增量 16.16（有符号）：符号由命令方向决定 */
                 {
                     HALL_StepQ16_t step = HALL_GetThetaStep();
                     if (step == 0) {

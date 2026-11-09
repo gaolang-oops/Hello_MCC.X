@@ -23,24 +23,31 @@ void     HALL_RegisterOnEdge(HallEdgeCallback_t cb);
 /* Hall 非法态(000/111)对应的角度哨兵值 */
 #define HALL_ANGLE_INVALID   0xFFFFu
 
-/* 电机旋转方向：由相邻两次合法 Hall 跳变自动判别。
- *   正转: Hall 5→4→6→2→3→1
- *   反转: Hall 1→3→2→6→4→5
+/* 电机旋转方向。正转: Hall 5→4→6→2→3→1；反转: Hall 1→3→2→6→4→5。
+ *
+ * 本模块区分两个方向：
+ *   - 命令方向(cmd)：控制层期望的旋转方向，决定 HALL_GetThetaStep() 的符号；
+ *   - 实测方向(meas)：由相邻两次合法 Hall 跳变自动判别，仅供监督/诊断。
+ * 两者暂不做一致性判定（换相/故障逻辑后续接入）。
  */
 typedef enum {
     HALL_DIR_FWD = 0,   /* 正转 */
     HALL_DIR_REV = 1,   /* 反转 */
 } HALL_Dir_e;
 
-/* 当前方向。无有效跳变时保持上次/预置值。 */
-HALL_Dir_e HALL_GetDirection(void);
+/* 实测方向：Hall 沿自动判别。无有效跳变时保持上次值。
+ * 仅用于监督/诊断，不参与 HALL_GetThetaStep() 的符号。 */
+HALL_Dir_e HALL_GetMeasuredDirection(void);
 
-/* 预置方向（静止/启动时用命令方向做种子，运行后由 Hall 沿自动校正）。
- * 并发：主循环与 Hall ISR 均可能写，单字写为原子操作。 */
-void HALL_SetDirection(HALL_Dir_e dir);
+/* 命令方向：控制层期望的旋转方向，默认 HALL_DIR_FWD。
+ * 决定 HALL_GetThetaStep() 的符号；由控制层（状态机/协议）设置。
+ * 并发：主循环写、Hall ISR 读，单字写原子。 */
+HALL_Dir_e HALL_GetCmdDirection(void);
+void       HALL_SetCmdDirection(HALL_Dir_e dir);
 
 /* 当前 Hall 状态对应的转子位置（brad16：0~65535 ⇔ 0~360°）。该 Hall 扇区瞬间的绝对位置（进入沿）。
- * 正/反转分别查表：
+ * 本接口按命令方向(cmd)选表：与 HALL_GetThetaStep() 的积分方向保持同一参考系，
+ * 供每 Hall 沿重同步 theta 使用。
  *   正转 5[210°]→4[270°]→6[330°]→2[30°]→3[90°]→1[150°]
  *   反转 1[210°]→3[150°]→2[90°]→6[30°]→4[330°]→5[270°]
  * 返回 HALL_ANGLE_INVALID 表示当前 Hall 非法(0/7)。 */
@@ -58,7 +65,8 @@ uint16_t HALL_GetEdgeDtTicks(void);
 
 /* 每 PWM 周期电角度增量（16.16 定点，有符号）：
  *   高 16 位 = 整数 brad16/PWM，低 16 位 = 1/65536 brad16 小数。
- *   正转 > 0，反转 < 0（二进制补码）。
+ *   符号由命令方向(cmd)决定：FWD > 0，REV < 0（二进制补码）；
+ *   实测方向(meas)不参与本符号，仅用于监督/诊断。
  *
  * 累加必须用无符号累加器：theta_u32 += (uint32_t)step;
  *   —— 有符号加法溢出是 C 的未定义行为；无符号加法则是模 2^32 的良定义回卷。
@@ -69,8 +77,8 @@ uint16_t HALL_GetEdgeDtTicks(void);
  */
 typedef int32_t HALL_StepQ16_t;
 
-/* 钳位后的滑动平均 60° dt 对应的每 PWM 角度增量（16.16，已应用方向符号）。
- *   正转 -> 正值，反转 -> 负值（二进制补码）。
+/* 钳位后的滑动平均 60° dt 对应的每 PWM 角度增量（16.16，已按命令方向应用符号）。
+ *   命令方向 FWD -> 正值，REV -> 负值（二进制补码）。
  *   消费方统一 theta_u32 += (uint32_t)step 即可。
  *   无效/溢出/超窗/尚未建立时保持上一次值。 */
 HALL_StepQ16_t HALL_GetThetaStep(void);
