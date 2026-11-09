@@ -201,6 +201,12 @@ static void MAIN_SECTION Debug_Report(void)
 	       m->state, (uint16_t)m->fault, m->hall_status,
 	       (uint16_t)m->six_step_en, m->target_duty, m->current_duty,
 	       (unsigned long)m->last_edge_age_ms);
+	/* 连续电气角（SPWM）：0~65535 brad16 */
+	{
+		uint16_t angle = m->rotor_angle16;
+		uint16_t angle_deg = (uint16_t)((((uint32_t)angle * 360u) + 32768u) >> 16);
+		printf("angle=%u deg (0x%04X)\n", (unsigned)angle_deg, (unsigned)angle);
+	}
 }
 
 int MAIN_SECTION main(void) {
@@ -300,15 +306,20 @@ int MAIN_SECTION main(void) {
                            (unsigned)dt, (unsigned long)dt_us);
                 }
 
-                /* 每 PWM 增量 16.16（有符号）：符号由命令方向决定 */
+                /* 每 PWM 增量 16.16（有符号）：符号由命令方向决定。
+                 * 拆成整数 + 4 位十进制小数打印，避免直接打印 16.16 原始值。 */
                 {
                     HALL_StepQ16_t step = HALL_GetThetaStep();
                     if (step == 0) {
                         printf("[HALL] step=0 (not established)\n");
                     } else {
-                        printf("[HALL] step=%ld (dtavg=%u)\n",
-                               (long)step,
-                               (unsigned)dt);
+                        uint32_t mag = (step < 0) ? (uint32_t)(-step) : (uint32_t)step;
+                        uint16_t whole = (uint16_t)(mag >> 16);
+                        uint16_t frac  = (uint16_t)(mag & 0xFFFFu);
+                        uint16_t frac_dec = (uint16_t)(((uint32_t)frac * 10000u + 32768u) >> 16);
+                        printf("[HALL] step=%s%u.%04u\n",
+                               (step < 0) ? "-" : "",
+                               (unsigned)whole, (unsigned)frac_dec);
                     }
                 }
             }

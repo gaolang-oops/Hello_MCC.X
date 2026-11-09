@@ -30,6 +30,91 @@ static uint16_t s_ready_ms = 0;                  /* READY 态停留计时 */
 static Motor_Cmd_e s_command = MOTOR_CMD_NONE;   /* 一次性命令锁存（应用层写，状态机消费清零）*/
 static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合）*/
 
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+/* ============ 连续电气角估算（SPWM 用）============
+ * 50µs ADC tick 对 HALL_GetThetaStep() 的 16.16 增量积分，
+ * 每个 Hall 沿用 HALL_GetHallRotorPosition() 重同步。
+ * 无有效 dt 或距上次 Hall 沿超过 ROTOR_ANGLE_TIMEOUT_MS 时冻结（step=0），
+ * 避免停转后旧 step 继续把角度积分走。
+ *
+ * 并发：Hall 回调在 IC ISR 写 pending/anchor（16 位原子写），
+ * 50µs 回调在 ADC ISR 消费；SPWM 模式 AD1 > IC，ADC 不会被 IC 打断。
+ * HALL_UpdateStep 的 32 位 step 写入侧已加临界区，避免撕裂读。
+ */
+
+/* 32 位累加器与高 16 位整数角共享存储（dsPIC33E 小端）：
+ *   part.frac  = 低 16 位（1/65536 brad16）
+ *   part.whole = 高 16 位（整数 brad16），16 位原子读
+ * 跨低位进位瞬间最多差 1 LSB（0.0055°），对角度/调试可忽略。 */
+typedef union {
+    volatile uint32_t u32;          /* 16.16 brad16 累加器 */
+    struct {
+        volatile uint16_t frac;     /* 低 16 位：小数 */
+        volatile uint16_t whole;    /* 高 16 位：整数 brad16 */
+    } part;
+} RotorTheta_t;
+
+typedef struct {
+    RotorTheta_t      theta;        /* 电气角累加器/影子共用存储 */
+    volatile uint16_t edge_anchor;  /* 本次 Hall 沿的绝对电角度 */
+    volatile bool     edge_pending; /* Hall 沿待重同步 */
+} RotorAngle_t;
+
+static RotorAngle_t s_angle;
+
+/* 30° brad16 = 65536/12，静止时用扇区中点作为初始角 */
+#define ROTOR_ANGLE_SECTOR_HALF   5461u
+
+/* 距上次 Hall 沿超过此时间视为停转，冻结角度 */
+#define ROTOR_ANGLE_TIMEOUT_MS    200u
+
+/* Hall 沿回调（IC ISR）：只发布锚点，实际重同步在 50µs tick 内完成。 */
+static void Motor_OnHallEdge(uint8_t hall) {
+    (void)hall;
+    /* 先写锚点，再置 pending；50µs tick 只在 pending=true 时读取。 */
+    s_angle.edge_anchor  = HALL_GetHallRotorPosition();
+    s_angle.edge_pending = true;
+}
+
+/* 50µs ADC tick：积分 + Hall 沿重同步 + 超时冻结。 */
+static void Motor_Tick50us(void) {
+    HALL_StepQ16_t step;
+    uint16_t dt_ticks;
+
+    if (s_angle.edge_pending) {
+        s_angle.edge_pending = false;
+        s_angle.theta.u32 = ((uint32_t)s_angle.edge_anchor) << 16;
+    }
+
+    step = HALL_GetThetaStep();
+    dt_ticks = HALL_GetEdgeDtTicks();
+    if (dt_ticks == 0u || HALL_MsSinceLastEdge() > ROTOR_ANGLE_TIMEOUT_MS) {
+        step = 0;   /* 速度尚未建立或 Hall 长时间无沿：冻结角度 */
+    }
+
+    s_angle.theta.u32 += (uint32_t)step;
+}
+
+/* 上电初始化：Hall 种子读取后调用，用当前扇区中点作为初始角。 */
+static void Motor_RotorAngleInit(void) {
+    uint16_t pos = HALL_GetHallRotorPosition();
+
+    s_angle.edge_pending = false;
+    s_angle.edge_anchor  = 0u;
+
+    if (pos == HALL_ANGLE_INVALID) {
+        s_angle.theta.u32 = 0u;
+    } else {
+        /* 静止时转子在扇区内位置未知，用扇区中点作为初值：
+         * FWD 进入沿是下边界 -> +30°；REV 进入沿是上边界 -> -30°。 */
+        uint16_t center = (HALL_GetCmdDirection() == HALL_DIR_REV)
+                        ? (uint16_t)(pos - ROTOR_ANGLE_SECTOR_HALF)
+                        : (uint16_t)(pos + ROTOR_ANGLE_SECTOR_HALF);
+        s_angle.theta.u32 = ((uint32_t)center) << 16;
+    }
+}
+#endif /* MC_DRIVE_MODE_SPWM */
+
 void Motor_SetCommand(Motor_Cmd_e cmd) {
     s_command = cmd;   /* 末写胜；单一应用上下文（主循环 Tier-4），无竞态 */
 }
@@ -55,12 +140,19 @@ void Motor_Init(void) {
     s_ready_ms    = 0;
     MC_Ramp_Init();
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    /* TODO(SPWM) */
+    /* SPWM：Hall 观察者用于角度重同步；50µs tick 做角度积分。
+     * 过流回调先注册，50µs ISR 内先做保护再积分角度。 */
+    HALL_RegisterOnEdge(Motor_OnHallEdge);
+    HALL_Init();                     /* 种子读取 + 注册 IC ISR → BSP */
+    Motor_RotorAngleInit();          /* 须在 HALL_Init 种子读取之后 */
+    MC_Fault_Init();                 /* 清故障标志 + 注册 50us 过流回调 */
+    MC_RegisterTick50us(Motor_Tick50us);
 #else
-    SIXSTEP_Init();    /* 注册 s_on_edge → hall，须先于 HALL_Init */
+    /* 六步：Hall 观察者用于换相。 */
+    SIXSTEP_Init();                  /* 注册 s_on_edge → hall，须先于 HALL_Init */
+    HALL_Init();
+    MC_Fault_Init();
 #endif
-    HALL_Init();       /* 种子读取 + 注册 IC ISR → BSP */
-    MC_Fault_Init();   /* 清故障标志 + 注册 50us 过流回调 */
     /* 绑定统一句柄 */
     s_motor_handle.state            = MOTOR_STATE_STOPPED;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
@@ -190,7 +282,7 @@ void Motor_Tick(void) {
 
 /*
  * 获取电机统一句柄（快照聚合）
- * 每次调用刷新全部动态字段（state/mode/fault/hall/en/duty/age）。
+ * 每次调用刷新全部动态字段（state/mode/fault/hall/en/duty/age/angle）。
  * ramp 指针为绑定关系，初始化后不变。
  *
  * 仅允许在主循环（Tier-2/Tier-3）上下文调用；严禁 ISR 内调用
@@ -205,5 +297,10 @@ Motor_Handle_t* Motor_GetHandle(void) {
     s_motor_handle.target_duty      = s_motor_handle.ramp->target_duty;
     s_motor_handle.current_duty     = MC_Ramp_GetCurrentDuty();
     s_motor_handle.last_edge_age_ms = HALL_MsSinceLastEdge();
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+    s_motor_handle.rotor_angle16    = s_angle.theta.part.whole;
+#else
+    s_motor_handle.rotor_angle16    = 0u;
+#endif
     return &s_motor_handle;
 }

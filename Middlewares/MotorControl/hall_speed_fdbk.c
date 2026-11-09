@@ -419,23 +419,29 @@ static void HALL_UpdateStep(uint16_t dt) {
     uint16_t q;
     uint16_t frac;
     int32_t  step;
+    uint16_t ipl_saved;
 
     if (dt == 0u) {
-        s_dt.step = 0;
-        return;
-    }
-	// 如果除数为零，会导致mcu复位
-    q    = __builtin_divmodud(HALL_STEP_K, dt, &rem);
-    frac = __builtin_divud((uint32_t)rem << 16, dt);
+        step = 0;
+    } else {
+        // 如果除数为零，会导致mcu复位
+        q    = __builtin_divmodud(HALL_STEP_K, dt, &rem);
+        frac = __builtin_divud((uint32_t)rem << 16, dt);
 
-    /* 先拼成正的 16.16 幅值，再按命令方向取负（补码）。
-     * 幅值上界：dt >= HALL_DT_MIN_TICKS=10 -> q <= 14933，
-     * 故 step < 0x3A560000，转 int32_t 绝不会溢出。 */
-    step = (int32_t)(((uint32_t)q << 16) | frac);
-    if (s_dir_cmd == HALL_DIR_REV) {
-        step = -step;
+        /* 先拼成正的 16.16 幅值，再按命令方向取负（补码）。
+         * 幅值上界：dt >= HALL_DT_MIN_TICKS=10 -> q <= 14933，
+         * 故 step < 0x3A560000，转 int32_t 绝不会溢出。 */
+        step = (int32_t)(((uint32_t)q << 16) | frac);
+        if (s_dir_cmd == HALL_DIR_REV) {
+            step = -step;
+        }
     }
+
+    /* 32 位写非原子：SPWM 模式下 ADC ISR(50us tick) 优先级高于 IC ISR，
+     * 可能在两次 16 位写之间打断并读到撕裂值；短临界区保护。 */
+    SET_AND_SAVE_CPU_IPL(ipl_saved, 7);
     s_dt.step = step;
+    RESTORE_CPU_IPL(ipl_saved);
 }
 
 /*

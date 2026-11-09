@@ -109,13 +109,15 @@ typedef struct {
     uint16_t       target_duty;    /* 目标占空比（旋钮/速度PI 输出） */
     uint16_t       current_duty;   /* 实际占空比（缓变后） */
     uint16_t       last_edge_age_ms; /* 距上次 Hall 边沿 ms（堵转观测） */
+    uint16_t       rotor_angle16;    /* 连续电气角（SPWM，brad16；六步=0） */
 } Motor_Handle_t;
 
 void Motor_Init(void);                 // 单一入口，内部包装全部 motor 层子模块初始化
 void Motor_Tick(void);                 // 1ms 节拍推进状态机（Tier-2 控制层，由主循环调用）
 void Motor_SetCommand(Motor_Cmd_e cmd);// 应用层下发一次性命令（START/STOP），状态机消费即清零
 
-/* 获取电机统一句柄（快照方式，调试/监控用）*/
+/* 获取电机统一句柄（快照方式，调试/监控用）
+ * 含连续电气角 rotor_angle16（SPWM 估算，0~65535 brad16；六步=0）。 */
 Motor_Handle_t* Motor_GetHandle(void);
 
 #ifdef	__cplusplus
