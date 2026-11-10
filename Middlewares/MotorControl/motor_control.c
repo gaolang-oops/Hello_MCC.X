@@ -113,6 +113,28 @@ static void Motor_RotorAngleInit(void) {
         s_angle.theta.u32 = ((uint32_t)center) << 16;
     }
 }
+
+/*
+ * 转子角 θr → SPWM 调制角 θmod
+ *   FWD: θmod = θr + 90°（电压矢量落 q 轴，最大转矩）
+ *   REV: θmod = θr − 90°（角增量已按命令方向取负，超前同样取负）
+ * brad16 域直接加减，uint16 溢出即 360° 回卷；只取整数部分，
+ * 分辨率 0.0055°，对 20kHz 调制足够（低 16 位小数不参与本次合成）。
+ * 并发：s_angle.theta.part.whole 为 16 位单字读，原子。
+ */
+uint16_t Motor_GetModAngle16(void) {
+    int16_t lead = SPWM_ANGLE_LEAD_Q16;
+
+    if (HALL_GetCmdDirection() == HALL_DIR_REV) {
+        lead = (int16_t)(-lead);
+    }
+    return (uint16_t)(s_angle.theta.part.whole + (uint16_t)lead);
+}
+#else
+/* 六步构建：无连续角，接口保持同一签名，返回 0。 */
+uint16_t Motor_GetModAngle16(void) {
+    return 0u;
+}
 #endif /* MC_DRIVE_MODE_SPWM */
 
 void Motor_SetCommand(Motor_Cmd_e cmd) {
@@ -299,8 +321,10 @@ Motor_Handle_t* Motor_GetHandle(void) {
     s_motor_handle.last_edge_age_ms = HALL_MsSinceLastEdge();
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
     s_motor_handle.rotor_angle16    = s_angle.theta.part.whole;
+    s_motor_handle.mod_angle16      = Motor_GetModAngle16();
 #else
     s_motor_handle.rotor_angle16    = 0u;
+    s_motor_handle.mod_angle16      = 0u;
 #endif
     return &s_motor_handle;
 }

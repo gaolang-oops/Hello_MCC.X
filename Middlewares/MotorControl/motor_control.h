@@ -62,6 +62,11 @@
 #define SPWM_DUTY_MID               (MC_DUTY_FULLSCALE >> 1)
 #define BOOTSTRAP_CHARGE_DUTY       SPWM_DUTY_MID
 
+/* SPWM 调制角超前量（电角度，brad16）：电压矢量落 q 轴，最大转矩。
+ *   θmod = θr + 90°（FWD） / θr − 90°（REV）
+ * 90° = 65536/4 = 0x4000。 */
+#define SPWM_ANGLE_LEAD_Q16         ((int16_t)0x4000)
+
 #ifdef	__cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -110,6 +115,7 @@ typedef struct {
     uint16_t       current_duty;   /* 实际占空比（缓变后） */
     uint16_t       last_edge_age_ms; /* 距上次 Hall 边沿 ms（堵转观测） */
     uint16_t       rotor_angle16;    /* 连续电气角（SPWM，brad16；六步=0） */
+    uint16_t       mod_angle16;      /* 合成后的调制角（SPWM，brad16；六步=0） */
 } Motor_Handle_t;
 
 void Motor_Init(void);                 // 单一入口，内部包装全部 motor 层子模块初始化
@@ -117,8 +123,17 @@ void Motor_Tick(void);                 // 1ms 节拍推进状态机（Tier-2 控
 void Motor_SetCommand(Motor_Cmd_e cmd);// 应用层下发一次性命令（START/STOP），状态机消费即清零
 
 /* 获取电机统一句柄（快照方式，调试/监控用）
- * 含连续电气角 rotor_angle16（SPWM 估算，0~65535 brad16；六步=0）。 */
+ * 含连续电气角 rotor_angle16 与合成调制角 mod_angle16
+ * （SPWM 估算，0~65535 brad16；六步=0）。 */
 Motor_Handle_t* Motor_GetHandle(void);
+
+/* 由转子角 θr 合成 SPWM 调制角（供调制链消费）：
+ *   FWD: θmod = θr + 90°
+ *   REV: θmod = θr − 90°
+ * 返回 brad16（0~65535 ⇔ 0~360°，uint16 加法溢出自动回卷）。
+ * 仅 SPWM 构建有实际合成；SIXSTEP 构建返回 0。
+ * 并发：读取 16 位 θ 整数部分，单字原子，主循环/ISR 均可调用。 */
+uint16_t Motor_GetModAngle16(void);
 
 #ifdef	__cplusplus
 }
