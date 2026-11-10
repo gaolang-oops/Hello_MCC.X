@@ -125,29 +125,24 @@ void Motor_Init(void) {
     s_ready_ms    = 0;
     MC_Ramp_Init();
 
-    /* 过流保护先注册，保证 50µs 回调里保护先于角度/调制 */
+    /* 两模式共用：过流保护先注册，保证 50µs 回调里保护先于角度/调制 */
     MC_Fault_Init();
 
-    /* Hall 观察者按模式注册（须先于 HALL_Init） */
-#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    /* 本分支没有 SPWM_Init，与六步的 SIXSTEP_Init 不对称是刻意为之：
-     *   - spwm 模块自身只有 s_enabled（静态初值 false），没有待初始化的硬件/状态；
-     *   - "关驱动"由下方统一的 Drive_Enable(false) 完成，不需要模块级 init；
-     *   - θr 重同步的 Hall 观察者由 rotor_angle 模块提供，在此注册。
-     * 六步的 SIXSTEP_Init 之所以存在，是因为它要封装 static 的换相观察者。
-     * 等 spwm 出现自己的状态（幅值/偏置/自检等）时再补 SPWM_Init。 */
-    HALL_RegisterOnEdge(RotorAngle_OnHallEdge);
-#else
-    /* 六步：Hall 观察者用于换相（内含关驱动 + 注册换相观察者）。 */
-    SIXSTEP_Init();
-#endif
-
-    /* 两模式共用：Hall 种子读取 + 注册 IC ISR → BSP */
+    /* 两模式共用：Hall 种子读取 + 注册 IC ISR → BSP。
+     * 此处仍在全局中断关闭期间（main.c 到 Motor_Init 之后才 GlobalEnable），
+     * HALL_Init 只做种子读取/ISR 注册、不会触发 s_on_edge；
+     * 各模式的观察者在下面注册，首次真实 Hall 沿发生在开中断之后，不会漏。 */
     HALL_Init();
 
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    RotorAngle_Init();               /* 须在 HALL_Init 种子读取后（读种子角） */
+    /* SPWM 无独立 Init：spwm 只有 s_enabled 静态初值，关驱动由 Drive_Enable(false)
+     * 统一处理。θr 观测由 rotor_angle 负责：RotorAngle_Init 注册角度观察者，
+     * 并用上面 HALL_Init 的种子角初始化。 */
+    RotorAngle_Init();
     MC_RegisterTick50us(Motor_Tick50us);
+#else
+    /* 六步：注册换相观察者 + 关驱动。 */
+    SIXSTEP_Init();
 #endif
 
     /* 注入过流 ISR 的驱动失能钩子：MC_Fault 只持有回调，不认识本模块。

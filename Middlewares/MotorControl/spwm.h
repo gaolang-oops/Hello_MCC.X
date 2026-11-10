@@ -103,6 +103,8 @@ SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty);
     内部完成幅值限幅（防正弦峰触界削顶）、查表/三相合成与
     PWM_SetDuty_UVW 同步写；调用方只提供调制角与缓变幅值，
     不需要知道 SPWM_Duty_UVW / PDC 细节。
+    依赖边界：本模块不依赖 rotor_angle / Hall；theta16 由上层
+    （motor_control 的 Motor_GetModAngle16：θr ± 90°）合成后传入。
     仅应在 SPWM_Enable(true) 且无故障时调用。
   */
 void SPWM_Output(uint16_t theta16, uint16_t amplitude);

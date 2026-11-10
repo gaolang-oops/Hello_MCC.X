@@ -92,6 +92,7 @@ SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty) {
  * SPWM 输出：θmod + 幅值 → 三相占空 → 同步写 PDC。
  * 幅值先限到 SPWM_AMP_MAX（84%），避免正弦峰触界削顶；
  * 三相占空由 SPWM_Duty_UVW 纯映射，寄存器写入仍经 pwm_common。
+ * 本模块不依赖 rotor_angle / Hall：θmod 由 motor_control 合成后传入。
  */
 void SPWM_Output(uint16_t theta16, uint16_t amplitude) {
     SPWM_DutyUVW_t d;

@@ -40,9 +40,16 @@ static RotorAngle_t s_angle;
 /* 距上次 Hall 沿超过此时间视为停转，冻结角度 */
 #define ROTOR_ANGLE_TIMEOUT_MS    200u
 
-/* 上电初始化：Hall 种子读取后调用，用当前扇区中点作为初始角。 */
+/* 上电初始化：Hall 种子读取后调用，注册观察者 + 用当前扇区中点作为初始角。 */
 void RotorAngle_Init(void) {
-    uint16_t pos = HALL_GetHallRotorPosition();
+    uint16_t pos;
+
+    /* 观察者属于观测器内部实现：本模块自己订阅 Hall 沿。
+     * 须在 HALL_Init() 之后调用：HALL_Init 只做种子读取/IC ISR 注册，
+     * 不会触发 s_on_edge；且 Motor_Init 期间全局中断关闭，不会漏沿。 */
+    HALL_RegisterOnEdge(RotorAngle_OnHallEdge);
+
+    pos = HALL_GetHallRotorPosition();
 
     s_angle.edge_pending = false;
     s_angle.edge_anchor  = 0u;

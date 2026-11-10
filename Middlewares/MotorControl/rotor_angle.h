@@ -15,6 +15,9 @@
  *   Hall 回调在 IC ISR 写 anchor/pending（16 位原子写），
  *   50µs 回调在 ADC ISR 消费；SPWM 构建下 AD1 > IC，ADC 不会被 IC 打断。
  *   HALL_UpdateStep 的 32 位 step 写入侧已有临界区，避免撕裂读。
+ *
+ * 注意：HALL_RegisterOnEdge 是单槽回调。RotorAngle_Init 会占用该槽位，
+ * 六步换相模式不要调用，否则会顶掉 SIXSTEP_OnHallEdge。
  */
 
 #ifndef ROTOR_ANGLE_H
@@ -27,8 +30,9 @@ extern "C" {
 #endif
 
 /* 初始化：须在 HALL_Init()（种子读取）之后调用。
- * 用当前 Hall 扇区中点作为静止时的初始角：
- *   FWD 进入沿 +30°，REV 进入沿 −30°。 */
+ * 内部注册 Hall 沿观察者（RotorAngle_OnHallEdge），并用当前 Hall 扇区
+ * 中点作为静止时的初始角：FWD 进入沿 +30°，REV 进入沿 −30°。
+ * 调用方不需要再单独 HALL_RegisterOnEdge。 */
 void RotorAngle_Init(void);
 
 /* Hall 沿回调（注册到 HALL_RegisterOnEdge，IC ISR 内执行）：
