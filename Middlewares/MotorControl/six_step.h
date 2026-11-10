@@ -23,8 +23,8 @@ extern "C" {
     六步换相模块初始化。
 
   @Description
-    复位使能标志为 false（不换相）。
-    PWM 初始全关由 MC_Ramp_Init()/SIXSTEP_Init()(内部调 PWM_AllOff) 共同保证。
+    复位使能标志为 false（不换相），并内部调 PWM_AllOff 保证 PWM 初始全关。
+    mc_ramp 只维护占空比参考，不再写硬件，故初始关断不依赖它。
  */
 void SIXSTEP_Init(void);
 

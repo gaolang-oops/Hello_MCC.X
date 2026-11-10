@@ -24,9 +24,7 @@
  */
 
 #include "MC_Fault.h"
-#include "mc_services.h"   /* MC_OC_* 语义接口（封装 raw 换算）/ Ibus mA / 时基 */
-#include "pwm_common.h"   /* PWM_AllOff：过流时 ISR 内立即硬关 */
-#include "six_step.h"     /* SIXSTEP_Enable：失能换相闸门，防下个 Hall 沿又开起来 */
+#include "mc_services.h"    /* MC_OC_* 语义接口（封装 raw 换算）/ Ibus mA / 时基 */
 #include <stdlib.h>
 
 /* ---- 保护策略参数（占位，需台架实测后调整） ---- */
@@ -55,6 +53,8 @@
 static volatile uint16_t  s_fault_flags = 0;
 static volatile uint16_t  s_last_commutate_tick = 0;
 static int32_t            s_ibus_filt = 0;   /* Ibus 一阶 IIR 低通输出(mA)；主循环读写，非 ISR */
+/* 驱动失能钩子：Motor_Init 注入，过流 ISR 调用；未注入时为 NULL */
+static volatile MC_Fault_DriveOffHook_t s_drive_off_hook = NULL;
 
 
 /* ---- 公共 API ---- */
@@ -69,6 +69,11 @@ void MC_Fault_Init(void)
     MC_OC_Configure(OC_THRESHOLD_MA);
     /* 经接缝自注册到 50us tick */
     MC_RegisterTick50us(MC_OverCurrentCheck);
+}
+
+void MC_Fault_SetDriveOffHook(MC_Fault_DriveOffHook_t hook)
+{
+    s_drive_off_hook = hook;   /* 单字写原子；须在 GlobalEnable 前注入 */
 }
 
 void MC_SetFault(MC_Fault_e f)
@@ -123,13 +128,15 @@ void MC_OverCurrentCheck(void)
         /* L1 快保护：ADC ISR 内立即处置（执行MC_OverCurrentCheck）。
          * 过流场景下 MOS 电流可达几十~上百 A，1ms 足以烧穿，必须 μs 级响应。
          *
-         * ① MC_SetFault：置标志，让状态机 FAULT 态接管后续（锁存/拒绝重启）。
-         * ② SIXSTEP_Enable(false)：清 s_enabled 闸门 + 内部 PWM_AllOff 硬关 6 管。
-         *    - s_enabled=false 阻止下个 Hall 沿(优先级7)触发换相
-         *    - 与 Hall ISR 并发安全：两者最坏竞争写 Override 寄存器，
+         * ① 驱动失能钩子：由 Motor_Init 注入（内部即 Drive_Enable(false)），
+         *    模式无关（六步清换相闸门 / SPWM 清调制闸门），内部 PWM_AllOff 硬关 6 管。
+         *    - 闸门清零阻止下个 Hall 沿(六步)或下一个 50µs 调制拍(SPWM)再开输出
+         *    - 与 Hall/ADC ISR 并发安全：最坏竞争写 Override 寄存器，
          *      PWM_AllOff 是安全态，"最后写入者胜"对结果无影响（终态都是关断）。
-         *    - s_enabled 为 volatile bool，单字节读写原子。 */
-        SIXSTEP_Enable(false);
+         * ② MC_SetFault：置标志，让状态机 FAULT 态接管后续（锁存/拒绝重启）。 */
+        if (s_drive_off_hook) {
+            s_drive_off_hook();
+        }
         MC_SetFault(MC_FAULT_OVER_CURRENT);
     }
 }

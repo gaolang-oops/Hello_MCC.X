@@ -199,7 +199,7 @@ static void MAIN_SECTION Debug_Report(void)
 	printf("mode=%d state=%d fault=0x%X hall=%d en=%d duty=%u/%u age=%lums\n",
 	       m->drive_mode,
 	       m->state, (uint16_t)m->fault, m->hall_status,
-	       (uint16_t)m->six_step_en, m->target_duty, m->current_duty,
+	       (uint16_t)m->drive_en, m->target_duty, m->current_duty,
 	       (unsigned long)m->last_edge_age_ms);
 	/* 连续电气角（SPWM）：0~65535 brad16 */
 	{

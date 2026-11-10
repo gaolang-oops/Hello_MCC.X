@@ -67,6 +67,11 @@
  * 90° = 65536/4 = 0x4000。 */
 #define SPWM_ANGLE_LEAD_Q16         ((int16_t)0x4000)
 
+/* SPWM 幅值上限：保证正弦峰不触界削顶。
+ * 调制中点 50%（SPWM_DUTY_MID），峰到 MC_DUTY_MAX 时
+ *   amp = 2 × (MC_DUTY_MAX − 中点) = 2 × (3220 − 1750) = 2940 ≈ 84% */
+#define SPWM_AMP_MAX                (2u * (MC_DUTY_MAX - SPWM_DUTY_MID))
+
 #ifdef	__cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -110,7 +115,7 @@ typedef struct {
     /* —— 子模块快照（GetHandle 时刷新） —— */
     MC_Fault_e     fault;          /* 故障位图（全锁存，只读视图） */
     uint8_t        hall_status;    /* 当前 Hall 状态 */
-    bool           six_step_en;    /* 六步换相闸门 */
+    bool           drive_en;       /* 驱动闸门（按模式取 SPWM/SIXSTEP 使能） */
     uint16_t       target_duty;    /* 目标占空比（旋钮/速度PI 输出） */
     uint16_t       current_duty;   /* 实际占空比（缓变后） */
     uint16_t       last_edge_age_ms; /* 距上次 Hall 边沿 ms（堵转观测） */

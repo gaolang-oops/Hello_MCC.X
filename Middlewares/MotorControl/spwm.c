@@ -88,9 +88,9 @@ void SPWM_Enable(bool en) {
     if (en) {
         /* 交接约定(PWM_HandOffToPwm)：先预置 PDC=50% 中点(SPWM 零矢量，三相差压=0，
          * 交接瞬间输出从"强制 00"跳到互补 50/50，无转矩冲击/无直通窗口)，再交还。
-         * 防御性重置：CHARGING 末拍 PWM_AllOff 后 PDC 可能已被 ramp 写走。
-         * TODO(SPWM): 调制链仍空缺(mc_ramp 幅值汇点 + 50us tick θ 积分 -> SPWM_Duty_UVW)，
-         *             接入前 RUNNING 态仅零矢量静默输出，电机不旋转。 */
+         * 防御性重置：CHARGING 末拍 PWM_AllOff 后 PDC 可能残留旧值。
+         * 使能后由 Motor_Tick50us 的 Drive_Output 每 50µs 用
+         * θmod（转子角 + 90°）与缓变幅值刷新三相占空。 */
         PWM_SetDuty_UVW(HALF_OF_DUTY_FULLSCALE, HALF_OF_DUTY_FULLSCALE, HALF_OF_DUTY_FULLSCALE);
         PWM_HandOffToPwm();
     } else {

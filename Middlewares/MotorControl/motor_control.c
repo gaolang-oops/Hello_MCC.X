@@ -30,6 +30,9 @@ static uint16_t s_ready_ms = 0;                  /* READY 态停留计时 */
 static Motor_Cmd_e s_command = MOTOR_CMD_NONE;   /* 一次性命令锁存（应用层写，状态机消费清零）*/
 static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合）*/
 
+/* 输出门面（模式分发） */
+static void Drive_Output(void);
+
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
 /* ============ 连续电气角估算（SPWM 用）============
  * 50µs ADC tick 对 HALL_GetThetaStep() 的 16.16 增量积分，
@@ -93,6 +96,12 @@ static void Motor_Tick50us(void) {
     }
 
     s_angle.theta.u32 += (uint32_t)step;
+
+    /* 调制输出：θmod（θr ± 90°）与缓变幅值 → 三相占空，同一 50µs 节拍写 PDC。
+     * 过流回调在本回调之前执行：故障/失能时必须停写，避免把 PWM_AllOff 覆盖。 */
+    if (SPWM_IsEnabled() && !MC_HasAnyFault()) {
+        Drive_Output();
+    }
 }
 
 /* 上电初始化：Hall 种子读取后调用，用当前扇区中点作为初始角。 */
@@ -155,6 +164,45 @@ static void Drive_Enable(bool en) {
 #endif
 }
 
+/* 驱动闸门快照（模式无关，供 Motor_GetHandle 诊断字段） */
+static bool Drive_IsEnabled(void) {
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+    return SPWM_IsEnabled();
+#else
+    return SIXSTEP_IsEnabled();
+#endif
+}
+
+/* MC_Fault 过流 ISR 的失能钩子：只做模式无关关断，保持 MC_Fault 不反向依赖本模块。
+ * 注册在 Motor_Init（GlobalEnable 之前），ISR 内只读函数指针 + 写寄存器。 */
+static void Motor_DriveOffHook(void) {
+    Drive_Enable(false);
+}
+
+/* ============ 驱动算法统一输出门面（模式分发）============
+ * 与 Drive_Enable 对称：mc_ramp 只维护 current_duty 参考，不碰硬件，
+ * 由调用方在各自速率调用本函数落硬件：
+ *   六步：Motor_Tick RUNNING（1ms）→ 三相同幅值直写 PDC；
+ *   SPWM：Motor_Tick50us（50µs）→ θmod + 幅值 → 三相正弦独立写 PDC。
+ */
+static void Drive_Output(void) {
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+    uint16_t amp = MC_Ramp_GetCurrentDuty();
+
+    /* 调制度 >84% 后正弦峰触界削顶：限幅到 2*(MAX-中点)，保持波形对称 */
+    if (amp > SPWM_AMP_MAX) {
+        amp = SPWM_AMP_MAX;
+    }
+
+    {
+        SPWM_DutyUVW_t d = SPWM_Duty_UVW(Motor_GetModAngle16(), amp);
+        PWM_SetDuty_UVW(d.u, d.v, d.w);
+    }
+#else
+    PWM_SetDutyCycle(MC_Ramp_GetCurrentDuty());
+#endif
+}
+
 /* BSP init 段之后、中断 GlobalEnable 之前完成Motor_Init */
 void Motor_Init(void) {
     s_motor_state = MOTOR_STATE_STOPPED;
@@ -162,8 +210,13 @@ void Motor_Init(void) {
     s_ready_ms    = 0;
     MC_Ramp_Init();
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    /* SPWM：Hall 观察者用于角度重同步；50µs tick 做角度积分。
-     * 过流回调先注册，50µs ISR 内先做保护再积分角度。 */
+    /* 本分支没有 SPWM_Init，与六步的 SIXSTEP_Init 不对称是刻意为之：
+     *   - spwm 模块自身只有 s_enabled（静态初值 false），没有待初始化的硬件/状态；
+     *   - "关驱动"由下方统一的 Drive_Enable(false) 完成，不需要模块级 init；
+     *   - θr 重同步用的 Hall 观察者（Motor_OnHallEdge）属于本层职责，
+     *     在此直接注册，不需要 spwm 模块知道它。
+     * 六步的 SIXSTEP_Init 之所以存在，是因为它要封装 static 的换相观察者。
+     * 等 spwm 出现自己的状态（幅值/偏置/自检等）时再补 SPWM_Init。 */
     HALL_RegisterOnEdge(Motor_OnHallEdge);
     HALL_Init();                     /* 种子读取 + 注册 IC ISR → BSP */
     Motor_RotorAngleInit();          /* 须在 HALL_Init 种子读取之后 */
@@ -175,13 +228,24 @@ void Motor_Init(void) {
     HALL_Init();
     MC_Fault_Init();
 #endif
+
+    /* 注入过流 ISR 的驱动失能钩子：MC_Fault 只持有回调，不认识本模块。
+     * 须在 GlobalEnable 之前完成（main.c 在 Motor_Init 后才开全局中断）。 */
+    MC_Fault_SetDriveOffHook(Motor_DriveOffHook);
+
+    /* 显式以驱动关闭态进入：不依赖各子模块 init 的副作用/静态初值。
+     * 六步/SPWM 均清软件闸门 + PWM_AllOff；MCC 上电配置本身也是
+     * Override 全关(OVRENH/L=1, OVRDAT=00)，此处再兜一层。
+     * 必须在 SYSTEM_Initialize()（PWM 已初始化）之后调用，main.c 顺序满足。 */
+    Drive_Enable(false);
+
     /* 绑定统一句柄 */
     s_motor_handle.state            = MOTOR_STATE_STOPPED;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
     s_motor_handle.ramp             = MC_Ramp_GetHandle();
     s_motor_handle.fault            = MC_FAULT_NONE;
     s_motor_handle.hall_status      = 0;
-    s_motor_handle.six_step_en      = false;
+    s_motor_handle.drive_en         = false;
     s_motor_handle.target_duty      = 0;
     s_motor_handle.current_duty     = 0;
     s_motor_handle.last_edge_age_ms = 0;
@@ -281,7 +345,12 @@ void Motor_Tick(void) {
             	HALL_ResetEdgeTimer();
             	/* 驱动使能（模式分发）：
                  * 六步 = 恢复上桥 override 交还 PWM + 用当前 Hall 建立换相初态
-                 * SPWM = SPWM_Enable 交接（已接入）；调制链仍 TODO(SPWM) */
+                 * SPWM = SPWM_Enable 交接（预置 50% 零矢量后交还互补自主控制） */
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP)
+                /* 六步：交接前先把 PDC 刷成当前参考(0)，避免恢复高桥 PWM 时
+                 * 输出上一次运行残留的占空比（mc_ramp 已不再写硬件）。 */
+                Drive_Output();
+#endif
                 Drive_Enable(true);
                 s_motor_state = MOTOR_STATE_RUNNING;
             } else if (++s_ready_ms >= READY_TIMEOUT_MS) {
@@ -293,6 +362,11 @@ void Motor_Tick(void) {
             /* CMD_STOP 已在顶部预分流硬停 → STOPPED（立即关 PWM）。
              * 旋钮归零缓停 → READY 待速（区别于 KEY1 的硬停彻底停）。 */
 			MC_Ramp_Step();
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP)
+            /* 六步：1ms 节拍把幅值三相同幅值写 PDC；
+             * SPWM 不走这里，由 50µs Motor_Tick50us 的 Drive_Output 输出。 */
+            Drive_Output();
+#endif
 			if (MC_GetKnobSpeed() == 0 && MC_Ramp_GetCurrentDuty() == 0) {
 				/* 缓停完毕：回到ready */
                 s_ready_ms = 0;
@@ -315,7 +389,7 @@ Motor_Handle_t* Motor_GetHandle(void) {
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
     s_motor_handle.fault            = MC_GetFault();
     s_motor_handle.hall_status      = HALL_GetHallStatus();
-    s_motor_handle.six_step_en      = SIXSTEP_IsEnabled();
+    s_motor_handle.drive_en         = Drive_IsEnabled();
     s_motor_handle.target_duty      = s_motor_handle.ramp->target_duty;
     s_motor_handle.current_duty     = MC_Ramp_GetCurrentDuty();
     s_motor_handle.last_edge_age_ms = HALL_MsSinceLastEdge();

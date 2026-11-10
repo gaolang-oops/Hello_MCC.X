@@ -52,6 +52,16 @@ typedef enum {
  *           "之后"是推荐而非硬性，因为 s_cb50us 静态初始化为 NULL，任何时刻注册都安全。 */
 void MC_Fault_Init(void);
 
+/* ---- 驱动失能钩子（依赖倒置） ----
+ * MC_Fault 不应反向依赖 motor_control / six_step / spwm。
+ * 由 Motor_Init 注入一个"模式无关失能"回调（内部即 Drive_Enable(false)），
+ * 过流 ISR 在置故障前调用它，立即清驱动闸门 + PWM_AllOff。
+ * 回调要求：无阻塞、只写闸门/Override 寄存器（可在 ISR 上下文执行）。
+ * hook=NULL 为防御分支：未注入时仅置故障；正常运行前必须由 Motor_Init 注入，
+ * 否则六步下 Hall ISR 可能在状态机接管前重新使能输出。 */
+typedef void (*MC_Fault_DriveOffHook_t)(void);
+void MC_Fault_SetDriveOffHook(MC_Fault_DriveOffHook_t hook);
+
 /* ---- 标志位管理（全锁存策略） ----
  * 置位：ISR（MC_OverCurrentCheck / MC_NotifyCommutation）写。
  * 读取：Motor_Tick（1ms 主循环）调 MC_HasAnyFault。
@@ -74,7 +84,7 @@ void MC_NotifyCommutation(void);
 /* Tier-1 过流检测回调(50us ADC ISR 内执行)。
  * 由 MC_Fault_Init 自注册,不应被其它代码直接调用。
  * 逻辑: blanking 内跳过;否则四路电流双向偏差判定,超限则:
- *   ① SIXSTEP_Enable(false)         ISR 内立即硬关 PWM + 失能换相闸门(响应 ≤50us)
+ *   ① 调 DriveOff 钩子              ISR 内立即硬关 PWM + 清驱动闸门(响应 ≤50us)
  *   ② MC_SetFault(OVER_CURRENT)     置标志,状态机 FAULT 态接管后续(锁存/拒绝重启)
  * 响应延迟要求 μs 级(过流 1ms 足以烧 MOS),故不等 1ms 状态机。
  * 与 Hall ISR 并发安全:s_enabled 单字节原子;Override 终态都是关断。 */
