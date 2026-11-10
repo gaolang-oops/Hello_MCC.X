@@ -343,14 +343,9 @@ void Motor_Tick(void) {
             	/* 重置霍尔边沿计时基准:把 HALL_TIMEOUT 窗口从"进入运行"起算,
                  * 防长时间停机后重启时旧时戳导致首个 RUNNING 拍误报 HALL_TIMEOUT。 */
             	HALL_ResetEdgeTimer();
-            	/* 驱动使能（模式分发）：
-                 * 六步 = 恢复上桥 override 交还 PWM + 用当前 Hall 建立换相初态
-                 * SPWM = SPWM_Enable 交接（预置 50% 零矢量后交还互补自主控制） */
-#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP)
-                /* 六步：交接前先把 PDC 刷成当前参考(0)，避免恢复高桥 PWM 时
-                 * 输出上一次运行残留的占空比（mc_ramp 已不再写硬件）。 */
-                Drive_Output();
-#endif
+            	/* 驱动使能（模式分发）：各模式在自身 Enable(true) 内完成安全预置——
+                 * 六步先置 PDC=0 再恢复上桥 PWM + 用当前 Hall 建立换相初态；
+                 * SPWM 先预置 50% 零矢量再交还互补自主控制。 */
                 Drive_Enable(true);
                 s_motor_state = MOTOR_STATE_RUNNING;
             } else if (++s_ready_ms >= READY_TIMEOUT_MS) {

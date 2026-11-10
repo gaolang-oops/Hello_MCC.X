@@ -60,6 +60,12 @@ static void SIXSTEP_OnHallEdge(uint8_t hall) {
 void SIXSTEP_Enable(bool en) {
     s_enabled = en;
     if (en) {
+		/* 先置 PDC=0 再恢复高桥 PWM：mc_ramp 已不写硬件，停止/故障后 PDC
+		 * 可能残留上次运行的占空比；六步使能统一从 0 起步，避免交接瞬间
+		 * 按旧占空比输出。RUNNING 里由 Drive_Output 按缓变参考逐级提升。
+		 * 顺序不可颠倒：PWM_HighPwmLowOff 一执行，高桥就按当前 PDC 输出。 */
+		PWM_SetDutyCycle(0);
+
 		/* 
 		 * PWMxH 失效【强制控制】，恢复由 PWM 模块的自主控制，以输出 PWM 波 
       	 * 注意，6-step 逻辑中，PWMxL 一直是强制控制，不能失效，否则 PWMxL 会输出互补的 PWM 波

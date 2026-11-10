@@ -33,9 +33,11 @@ void SIXSTEP_Init(void);
     使能/失能六步换相。
 
   @Description
-    en=true  时，后续 SIXSTEP_Communicate() 调用才会真正驱动 Override 寄存器。
+    en=true  时，先把三相 PDC 置 0（消除上次运行残留占空比），再恢复上桥 PWM，
+    并用当前 Hall 建立换相初态；此后 SIXSTEP_Communicate() 才真正驱动 Override。
     en=false 时，立即将三相全部强制为 OFF（安全态），并使后续 Communicate 成为空操作。
     进入 MOTOR_STATE_RUNNING 前置 true，离开（停机/故障）置 false。
+    使能统一从 0 占空起步，RUNNING 里由 Drive_Output 按缓变参考逐级提升。
  */
 void SIXSTEP_Enable(bool en);
 
