@@ -187,19 +187,9 @@ static void Motor_DriveOffHook(void) {
  */
 static void Drive_Output(void) {
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    uint16_t amp = MC_Ramp_GetCurrentDuty();
-
-    /* 调制度 >84% 后正弦峰触界削顶：限幅到 2*(MAX-中点)，保持波形对称 */
-    if (amp > SPWM_AMP_MAX) {
-        amp = SPWM_AMP_MAX;
-    }
-
-    {
-        SPWM_DutyUVW_t d = SPWM_Duty_UVW(Motor_GetModAngle16(), amp);
-        PWM_SetDuty_UVW(d.u, d.v, d.w);
-    }
+    SPWM_Output(Motor_GetModAngle16(), MC_Ramp_GetCurrentDuty());
 #else
-    PWM_SetDutyCycle(MC_Ramp_GetCurrentDuty());
+    SIXSTEP_Output(MC_Ramp_GetCurrentDuty());
 #endif
 }
 

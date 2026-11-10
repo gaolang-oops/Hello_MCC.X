@@ -34,6 +34,11 @@
  * 自举充电占空、使能交接零矢量、SPWM_Duty_UVW 调制基线共用此值 */
 #define HALF_OF_DUTY_FULLSCALE   (MC_DUTY_FULLSCALE >> 1)
 
+/* 幅值上限：保证正弦峰不触界削顶。
+ * 调制中点 50%，峰到 MC_DUTY_MAX 时 amp = 2×(MC_DUTY_MAX − 中点)
+ *   = 2×(3220 − 1750) = 2940 ≈ 84% */
+#define SPWM_AMP_MAX             (2u * (MC_DUTY_MAX - HALF_OF_DUTY_FULLSCALE))
+
 /* SPWM 使能闸门（软件互锁；对称于 six_step.c 的 s_enabled） */
 static volatile bool s_enabled = false;
 /*
@@ -81,6 +86,21 @@ SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty) {
     duty_out.w = MC_DUTY_CLAMP(duty_temp);
 
     return duty_out;
+}
+
+/*
+ * SPWM 输出：θmod + 幅值 → 三相占空 → 同步写 PDC。
+ * 幅值先限到 SPWM_AMP_MAX（84%），避免正弦峰触界削顶；
+ * 三相占空由 SPWM_Duty_UVW 纯映射，寄存器写入仍经 pwm_common。
+ */
+void SPWM_Output(uint16_t theta16, uint16_t amplitude) {
+    SPWM_DutyUVW_t d;
+
+    if (amplitude > SPWM_AMP_MAX) {
+        amplitude = SPWM_AMP_MAX;
+    }
+    d = SPWM_Duty_UVW(theta16, amplitude);
+    PWM_SetDuty_UVW(d.u, d.v, d.w);
 }
 
 void SPWM_Enable(bool en) {

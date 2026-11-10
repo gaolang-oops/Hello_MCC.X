@@ -49,6 +49,17 @@ bool SIXSTEP_IsEnabled(void);
 
 /**
   @Summary
+    六步输出：把标量 duty 同步写三相 PDC。
+
+  @Description
+    六步三相同幅值（满量程 = PHASE），细节由本模块负责；
+    调用方只提供缓变后的幅值参考，不需要知道 PDC/三相同写。
+    仅应在 SIXSTEP_Enable(true) 的 RUNNING 阶段调用。
+  */
+void SIXSTEP_Output(uint16_t duty);
+
+/**
+  @Summary
     依据 Hall 状态执行一次换相（查表 → 写 Override 寄存器）。
 
   @Description

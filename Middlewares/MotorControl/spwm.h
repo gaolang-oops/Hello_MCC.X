@@ -97,6 +97,18 @@ SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty);
 
 /**
   @Summary
+    SPWM 输出：θmod + 幅值 → 三相占空并同步写 PDC。
+
+  @Description
+    内部完成幅值限幅（防正弦峰触界削顶）、查表/三相合成与
+    PWM_SetDuty_UVW 同步写；调用方只提供调制角与缓变幅值，
+    不需要知道 SPWM_Duty_UVW / PDC 细节。
+    仅应在 SPWM_Enable(true) 且无故障时调用。
+  */
+void SPWM_Output(uint16_t theta16, uint16_t amplitude);
+
+/**
+  @Summary
     使能/失能 SPWM 输出（对称于 SIXSTEP_Enable 的驱动闸门）。
 
   @Description

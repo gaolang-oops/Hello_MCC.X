@@ -67,11 +67,6 @@
  * 90° = 65536/4 = 0x4000。 */
 #define SPWM_ANGLE_LEAD_Q16         ((int16_t)0x4000)
 
-/* SPWM 幅值上限：保证正弦峰不触界削顶。
- * 调制中点 50%（SPWM_DUTY_MID），峰到 MC_DUTY_MAX 时
- *   amp = 2 × (MC_DUTY_MAX − 中点) = 2 × (3220 − 1750) = 2940 ≈ 84% */
-#define SPWM_AMP_MAX                (2u * (MC_DUTY_MAX - SPWM_DUTY_MID))
-
 #ifdef	__cplusplus
 extern "C" {
 #endif /* __cplusplus */

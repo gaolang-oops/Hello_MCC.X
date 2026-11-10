@@ -89,6 +89,11 @@ bool SIXSTEP_IsEnabled(void) {
     return s_enabled;
 }
 
+void SIXSTEP_Output(uint16_t duty) {
+    /* 六步三相同幅值：细节收敛在本模块，motor 层只给幅值参考 */
+    PWM_SetDutyCycle(duty);
+}
+
 void SIXSTEP_Init(void) {
 	SIXSTEP_Enable(false); //自举电容充电完成后才能开始换相
     /* 订阅 Hall 跳变事件：feedback 去抖成功后回调本模块换相 */
