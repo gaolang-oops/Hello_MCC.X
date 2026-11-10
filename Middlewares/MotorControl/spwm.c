@@ -96,6 +96,12 @@ SPWM_DutyUVW_t SPWM_Duty_UVW(uint16_t theta16, uint16_t target_duty) {
 void SPWM_Output(uint16_t theta16, uint16_t amplitude) {
     SPWM_DutyUVW_t d;
 
+    /* 模块自身闸门：失能时绝不写 PDC；故障闸门仍由调用方(motor_control)判断，
+     * 避免 spwm 反向依赖 MC_Fault。 */
+    if (!s_enabled) {
+        return;
+    }
+
     if (amplitude > SPWM_AMP_MAX) {
         amplitude = SPWM_AMP_MAX;
     }

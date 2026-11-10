@@ -98,8 +98,9 @@ static void Motor_Tick50us(void) {
     s_angle.theta.u32 += (uint32_t)step;
 
     /* 调制输出：θmod（θr ± 90°）与缓变幅值 → 三相占空，同一 50µs 节拍写 PDC。
-     * 过流回调在本回调之前执行：故障/失能时必须停写，避免把 PWM_AllOff 覆盖。 */
-    if (SPWM_IsEnabled() && !MC_HasAnyFault()) {
+     * 故障闸门在本层判断（过流回调先执行，避免把 PWM_AllOff 覆盖）；
+     * 使能闸门由 SPWM_Output 内部自查。 */
+    if (!MC_HasAnyFault()) {
         Drive_Output();
     }
 }
@@ -199,6 +200,11 @@ void Motor_Init(void) {
     s_command     = MOTOR_CMD_NONE;
     s_ready_ms    = 0;
     MC_Ramp_Init();
+
+    /* 过流保护先注册，保证 50µs 回调里保护先于角度/调制 */
+    MC_Fault_Init();
+
+    /* Hall 观察者按模式注册（须先于 HALL_Init） */
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
     /* 本分支没有 SPWM_Init，与六步的 SIXSTEP_Init 不对称是刻意为之：
      *   - spwm 模块自身只有 s_enabled（静态初值 false），没有待初始化的硬件/状态；
@@ -208,15 +214,17 @@ void Motor_Init(void) {
      * 六步的 SIXSTEP_Init 之所以存在，是因为它要封装 static 的换相观察者。
      * 等 spwm 出现自己的状态（幅值/偏置/自检等）时再补 SPWM_Init。 */
     HALL_RegisterOnEdge(Motor_OnHallEdge);
-    HALL_Init();                     /* 种子读取 + 注册 IC ISR → BSP */
-    Motor_RotorAngleInit();          /* 须在 HALL_Init 种子读取之后 */
-    MC_Fault_Init();                 /* 清故障标志 + 注册 50us 过流回调 */
-    MC_RegisterTick50us(Motor_Tick50us);
 #else
-    /* 六步：Hall 观察者用于换相。 */
-    SIXSTEP_Init();                  /* 注册 s_on_edge → hall，须先于 HALL_Init */
+    /* 六步：Hall 观察者用于换相（内含关驱动 + 注册换相观察者）。 */
+    SIXSTEP_Init();
+#endif
+
+    /* 两模式共用：Hall 种子读取 + 注册 IC ISR → BSP */
     HALL_Init();
-    MC_Fault_Init();
+
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+    Motor_RotorAngleInit();          /* 须在 HALL_Init 种子读取后（读种子角） */
+    MC_RegisterTick50us(Motor_Tick50us);
 #endif
 
     /* 注入过流 ISR 的驱动失能钩子：MC_Fault 只持有回调，不认识本模块。

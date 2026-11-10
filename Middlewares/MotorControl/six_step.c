@@ -90,7 +90,11 @@ bool SIXSTEP_IsEnabled(void) {
 }
 
 void SIXSTEP_Output(uint16_t duty) {
-    /* 六步三相同幅值：细节收敛在本模块，motor 层只给幅值参考 */
+    /* 模块自身闸门：失能时绝不写 PDC（与 SIXSTEP_Communicate 一致）；
+     * 六步三相同幅值细节收敛在本模块，motor 层只给幅值参考。 */
+    if (!s_enabled) {
+        return;
+    }
     PWM_SetDutyCycle(duty);
 }
 
