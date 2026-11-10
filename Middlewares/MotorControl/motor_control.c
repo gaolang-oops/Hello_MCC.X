@@ -135,8 +135,8 @@ void Motor_Init(void) {
     HALL_Init();
 
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
-    /* SPWM 无独立 Init：spwm 只有 s_enabled 静态初值，关驱动由 Drive_Enable(false)
-     * 统一处理。θr 观测由 rotor_angle 负责：RotorAngle_Init 注册角度观察者，
+    /* 
+     * θr 观测由 rotor_angle 负责：RotorAngle_Init 注册角度观察者，
      * 并用上面 HALL_Init 的种子角初始化。 */
     RotorAngle_Init();
     MC_RegisterTick50us(Motor_Tick50us);
