@@ -324,6 +324,31 @@ void HALL_ResetEdgeTimer(void) {
 }
 
 /*
+ * 启动种子：无 Hall 边沿时给 dt/step 一个初值，让角度积分立即启动。
+ * 必须同时刷新 s_last_edge_tick_ms，否则 RotorAngle_Tick50us 的
+ * “距上次沿 > 200ms 冻结”会把 step 清零。
+ * 不写 prev_cap/have_prev/hist：首个真实沿仍按原逻辑重建基准，
+ * 随后用实测 dt 自然替换种子。
+ */
+void HALL_SeedDt(uint16_t dt_ticks) {
+    uint16_t ipl_saved;
+
+    if (dt_ticks < HALL_DT_MAX_SPEED_TICKS) {
+        dt_ticks = HALL_DT_MAX_SPEED_TICKS;
+    }
+    if (dt_ticks > HALL_DT_MAX_TICKS) {
+        dt_ticks = HALL_DT_MAX_TICKS;
+    }
+
+    SET_AND_SAVE_CPU_IPL(ipl_saved, 7);
+    s_dt.dt_ticks       = dt_ticks;
+    s_last_edge_tick_ms = MC_GetTickMs();
+    RESTORE_CPU_IPL(ipl_saved);
+
+    HALL_UpdateStep(dt_ticks);   /* 内部带临界区，按命令方向取符号 */
+}
+
+/*
  * HALL_UpdateDirection
  * 直接查正转角度表：相邻合法 Hall 状态的角度差为 +60°（正转）或
  * -60°（反转）。差值 ±120° 表示漏掉一个 Hall 沿，仍可判向。

@@ -34,12 +34,40 @@ static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合�
 /* 输出门面（模式分发） */
 static void Drive_Output(void);
 
+/* 旋钮门限（UQ0.16），启动/运行构成 2% 回差，避免边界来回启停。
+ * SPWM：12% 启动 / 10% 停止（实测 9% 转不动）。
+ * 六步： 8% 启动 /  6% 停止（台架确认）。
+ * 均高于 mc_services 的 5% 输入死区，可被 MC_GetKnobSpeed() 观察到。 */
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+#define READY_MIN_KNOB_UQ16       7864u    /* 12% */
+#define RUN_MIN_KNOB_UQ16         6554u    /* 10% */
+#else
+#define READY_MIN_KNOB_UQ16       5243u    /* 8% */
+#define RUN_MIN_KNOB_UQ16         3932u    /* 6% */
+#endif
+
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+/* 启动种子：静止时没有 Hall 边沿 -> dt=0 -> RotorAngle 不积分。
+ * 进入 RUNNING 前按 50rpm 给 dt 一个初值，让角度立即开始旋转；
+ * 真实 Hall 沿到来后由 HALL_UpdateDt/HALL_UpdateStep 用实测值替换。
+ *
+ * 50 rpm @ p=2, Fpwm=20kHz:
+ *   step = 65536 × (rpm/60 × p) / Fpwm
+ *        = 65536 × (50/60 × 2) / 20000 = 5.4613 brad16/tick
+ * 启动只需近似，取整为 5 brad16/tick（约 45.8 rpm）。
+ * 改 rpm/极对数/PWM 频率时按上式重算。 */
+#define STARTUP_STEP_INT         5u
+
+static void Motor_SeedRotorSpeed(void) {
+    /* dt = K / step；K 为 uint32、step 为 uint16，用 32/16 除法 builtin */
+    uint16_t dt = __builtin_divud(HALL_GetStepK(), STARTUP_STEP_INT);
+    HALL_SeedDt(dt);
+}
+
 /* 50µs ADC tick：转子角观测 + 调制输出。
  * 观测（Hall 重同步 / 16.16 积分 / 超时冻结）已收敛到 rotor_angle 模块；
  * 本函数只负责同一节拍触发输出。
- * 故障闸门在本层判断（过流回调先执行，避免把 PWM_AllOff 覆盖）；
- * 使能闸门由 SPWM_Output 内部自查。 */
+ * 故障闸门在本层判断，使能闸门由 SPWM_Output 内部自查。 */
 static void Motor_Tick50us(void) {
     RotorAngle_Tick50us();
 
@@ -253,12 +281,17 @@ void Motor_Tick(void) {
 
         case MOTOR_STATE_READY:
             /* 就绪：PWM 使能，自举已充，等旋钮指令。
-             * 旋钮>0 → RUNNING
+             * 旋钮 ≥ READY_MIN_KNOB → RUNNING（SPWM 12% / 六步 8%）
              * 超时30s且旋钮=0 → STOPPED */
-            if (MC_GetKnobSpeed() > 0) {
+            if (MC_GetKnobSpeed() >= READY_MIN_KNOB_UQ16) {
             	/* 重置霍尔边沿计时基准:把 HALL_TIMEOUT 窗口从"进入运行"起算,
                  * 防长时间停机后重启时旧时戳导致首个 RUNNING 拍误报 HALL_TIMEOUT。 */
             	HALL_ResetEdgeTimer();
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+                /* 静止时 dt=0 会让转子角积分冻结；用 50rpm 种子让角度立即旋转，
+                 * 真实 Hall 沿到来后由 HALL_UpdateDt 自动替换。六步换相不需要。 */
+                Motor_SeedRotorSpeed();
+#endif
             	/* 驱动使能（模式分发）：各模式在自身 Enable(true) 内完成安全预置——
                  * 六步先置 PDC=0 再恢复上桥 PWM + 用当前 Hall 建立换相初态；
                  * SPWM 先预置 50% 零矢量再交还互补自主控制。 */
@@ -271,15 +304,19 @@ void Motor_Tick(void) {
 
         case MOTOR_STATE_RUNNING:
             /* CMD_STOP 已在顶部预分流硬停 → STOPPED（立即关 PWM）。
-             * 旋钮归零缓停 → READY 待速（区别于 KEY1 的硬停彻底停）。 */
+             * 旋钮 < RUN_MIN_KNOB → 请求缓停，幅值降到 0 后回 READY。 */
+            if (MC_GetKnobSpeed() < RUN_MIN_KNOB_UQ16) {
+                MC_Ramp_RequestStop();
+            }
 			MC_Ramp_Step();
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP)
             /* 六步：1ms 节拍把幅值三相同幅值写 PDC；
              * SPWM 不走这里，由 50µs Motor_Tick50us 的 Drive_Output 输出。 */
             Drive_Output();
 #endif
-			if (MC_GetKnobSpeed() == 0 && MC_Ramp_GetCurrentDuty() == 0) {
-				/* 缓停完毕：回到ready */
+            /* 缓停完成：幅值已到 0 且旋钮仍低于运行下限 → READY */
+            if (MC_Ramp_GetCurrentDuty() == 0u &&
+                MC_GetKnobSpeed() < RUN_MIN_KNOB_UQ16) {
                 s_ready_ms = 0;
                 s_motor_state = MOTOR_STATE_READY;
             }

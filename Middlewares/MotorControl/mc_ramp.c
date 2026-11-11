@@ -26,12 +26,21 @@ static Ramp_Handle_t s_ramp = {
 /* 目标占空比来源（速度环接缝）：默认旋钮直驱，可经 SetTargetProvider 切换 */
 static Ramp_TargetProvider_t s_target_provider = MC_GetKnobSpeed;
 
+/* 缓停请求：置位后忽略 target provider，把 current_duty 缓降到 0 */
+static bool s_stop_request = false;
+
 void MC_Ramp_Init(void)
 {
     s_ramp.target_duty  = 0;
     s_ramp.current_duty = 0;
     s_ramp.last_tick_ms = MC_GetTickMs();
     s_target_provider   = MC_GetKnobSpeed;   /* 复位为默认旋钮直驱 */
+    s_stop_request      = false;
+}
+
+void MC_Ramp_RequestStop(void)
+{
+    s_stop_request = true;   /* 可重复调用；到 0 后由 MC_Ramp_Step 自动清除 */
 }
 
 void MC_Ramp_SetTargetProvider(Ramp_TargetProvider_t provider)
@@ -50,6 +59,7 @@ void MC_Ramp_ForceZero(void)
 {
     s_ramp.target_duty  = 0;
     s_ramp.current_duty = 0;
+    s_stop_request      = false;
 }
 
 /*
@@ -60,11 +70,17 @@ void MC_Ramp_ForceZero(void)
  */
 void MC_Ramp_Step(void)
 {
-	uint16_t speed_uq16 = s_target_provider();   /* 经 provider：旋钮直驱 / 速度环输出 */
+	/* 缓停请求优先：忽略 provider，目标固定 0 */
+	uint16_t speed_uq16 = s_stop_request ? 0u : s_target_provider();
 
 	/* 目标速度->目标占空比
 	 * 反归一化 —— /65536 × PWM周期 */
 	s_ramp.target_duty = __builtin_muluu(speed_uq16, MC_DUTY_FULLSCALE) >> 16;
+
+    /* 已经到 0：清停止请求，避免下次启动仍被压成 0 */
+    if (s_stop_request && s_ramp.current_duty == 0u) {
+        s_stop_request = false;
+    }
 
     uint16_t now = MC_GetTickMs();
     if ((now - s_ramp.last_tick_ms) < s_ramp.ramp_period_ms)
@@ -83,6 +99,11 @@ void MC_Ramp_Step(void)
         (uint16_t)(s_ramp.current_duty + step) :
         (uint16_t)(s_ramp.current_duty - step);
     s_ramp.current_duty = next;   /* 仅更新参考，硬件由 Drive_Output 按模式/速率写 */
+
+    /* 缓停刚到达 0：清请求 */
+    if (s_stop_request && next == 0u) {
+        s_stop_request = false;
+    }
 }
 
 Ramp_Handle_t* MC_Ramp_GetHandle(void)

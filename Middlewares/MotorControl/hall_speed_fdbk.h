@@ -83,6 +83,13 @@ typedef int32_t HALL_StepQ16_t;
  *   无效/溢出/超窗/尚未建立时保持上一次值。 */
 HALL_StepQ16_t HALL_GetThetaStep(void);
 
+/* 启动种子：在还没有 Hall 边沿时，给 60° 间隔 dt 一个初值，并同步刷新
+ * dt_ticks / step / 边沿计时，使 RotorAngle 立即开始积分（否则 dt=0 会冻结）。
+ * 调用时机：进入 RUNNING 前（HALL_ResetEdgeTimer 之后）。
+ * 真实 Hall 沿到来后，HALL_UpdateDt/HALL_UpdateStep 会用实测 dt 替换种子。
+ * dt_ticks 会被钳到 [HALL_DT_MAX_SPEED_TICKS, HALL_DT_MAX_TICKS]。 */
+void HALL_SeedDt(uint16_t dt_ticks);
+
 /* 调试用：返回每 PWM 角度增量公式中的常数 K（brad16 每 T3 tick）。
  * 当前配置（Fcy=70MHz、Fpwm=20kHz、T3 1:256）下应为 149333。 */
 uint32_t HALL_GetStepK(void);

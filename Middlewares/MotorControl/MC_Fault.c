@@ -47,7 +47,7 @@
  * 运行中距上次合法 Hall 边沿超过此时长 -> HALL_TIMEOUT。
  * 取值须 > 最低工作转速下的单边沿间隔(含裕量);过小会在强载低速爬行时误报。
  * 参考: ST MCSDK 由最小可靠转速动态派生(兜底 150ms);本项目开环调速暂用固定值。 */
-#define HALL_TIMEOUT_MS         500U    /* 霍尔信号丢失阈值 500ms（占位，按最低转速调） */
+#define HALL_TIMEOUT_MS         600U    /* 霍尔信号丢失阈值 600ms（占位，按最低转速调） */
 
 /* ---- 模块状态 ---- */
 static volatile uint16_t  s_fault_flags = 0;

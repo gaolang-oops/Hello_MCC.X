@@ -188,7 +188,7 @@ static void MAIN_SECTION Debug_Report(void)
 		return;
 	}
 	s_cnt = 0;
-
+	printf("============================================\n");
 	Motor_Handle_t *m = Motor_GetHandle();
 	/* 采样数据保持直接调用(不纳入 motor handle) */
 	printf("Vbus=%lu mV  Ia=%d  Ib=%d  Ic=%d  Ibus=%d mA\n",
@@ -201,11 +201,58 @@ static void MAIN_SECTION Debug_Report(void)
 	       m->state, (uint16_t)m->fault, m->hall_status,
 	       (uint16_t)m->drive_en, m->target_duty, m->current_duty,
 	       (unsigned long)m->last_edge_age_ms);
-	/* 连续电气角（SPWM）：0~65535 brad16 */
+	/* 转子角：Hall 估计角 θr + 实际调制角 θmod（brad16） */
 	{
-		uint16_t angle = m->rotor_angle16;
-		uint16_t angle_deg = (uint16_t)((((uint32_t)angle * 360u) + 32768u) >> 16);
-		printf("angle=%u deg (0x%04X)\n", (unsigned)angle_deg, (unsigned)angle);
+		uint16_t rotor = m->rotor_angle16;
+		uint16_t mod   = m->mod_angle16;
+		uint16_t rotor_deg = (uint16_t)((((uint32_t)rotor * 360u) + 32768u) >> 16);
+		uint16_t mod_deg   = (uint16_t)((((uint32_t)mod * 360u) + 32768u) >> 16);
+
+		printf("angle=%u deg mod=%u deg (0x%04X/0x%04X)\n",
+		       (unsigned)rotor_deg, (unsigned)mod_deg,
+		       (unsigned)rotor, (unsigned)mod);
+	}
+
+	/* Hall 方向 / 扇区进入角 / 60° dt / 每 PWM 步进 */
+	{
+		HALL_Dir_e dir_cmd  = HALL_GetCmdDirection();
+		HALL_Dir_e dir_meas = HALL_GetMeasuredDirection();
+		uint16_t pos = HALL_GetHallRotorPosition();
+		uint16_t dt  = HALL_GetEdgeDtTicks();
+
+		if (pos == HALL_ANGLE_INVALID) {
+			printf("hall cmd=%s meas=%s pos=INVALID\n",
+			       (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
+			       (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV");
+		} else {
+			uint16_t deg = (uint16_t)((((uint32_t)pos * 360u) + 32768u) >> 16);
+			printf("hall cmd=%s meas=%s pos=%u deg (0x%04X)\n",
+			       (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
+			       (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV",
+			       (unsigned)deg, (unsigned)pos);
+		}
+
+		if (dt == 0u) {
+			printf("dt60=0 (not established)  step=0\n");
+		} else {
+			uint32_t dt_us = ((uint32_t)dt * 3657UL) / 1000UL;
+			HALL_StepQ16_t step = HALL_GetThetaStep();
+
+			if (step == 0) {
+				printf("dt60=%u ticks (%lu us)  step=0\n",
+				       (unsigned)dt, (unsigned long)dt_us);
+			} else {
+				uint32_t mag = (step < 0) ? (uint32_t)(-step) : (uint32_t)step;
+				uint16_t whole = (uint16_t)(mag >> 16);
+				uint16_t frac  = (uint16_t)(mag & 0xFFFFu);
+				uint16_t frac_dec = (uint16_t)(((uint32_t)frac * 10000u + 32768u) >> 16);
+
+				printf("dt60=%u ticks (%lu us)  step=%s%u.%04u\n",
+				       (unsigned)dt, (unsigned long)dt_us,
+				       (step < 0) ? "-" : "",
+				       (unsigned)whole, (unsigned)frac_dec);
+			}
+		}
 	}
 }
 
@@ -271,62 +318,8 @@ int MAIN_SECTION main(void) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
 
-            /* 方向 / Hall 转子位置 / 60° dt 调试打印（500ms 一次）。
-             * cmd  = 命令方向（决定 step 符号）；meas = Hall 实测方向（仅监督）。
-             * pos  = 当前 Hall 扇区“进入沿”的绝对电角度(brad16)，按命令方向选表，
-             *        与 step 同一参考系，供 theta 重同步使用。
-             * dt 是最近最多 6 个有效 60° 间隔的滑动平均（T3CLK tick，3657ns/tick），
-             * 每个合法沿更新一次；0 表示尚未建立；停机后旧值保留，需结合 age 判断新鲜度。 */
-            {
-                uint8_t hall = HALL_GetHallStatus();
-                HALL_Dir_e dir_cmd  = HALL_GetCmdDirection();
-                HALL_Dir_e dir_meas = HALL_GetMeasuredDirection();
-                uint16_t pos = HALL_GetHallRotorPosition();
-                uint16_t dt = HALL_GetEdgeDtTicks();
-
-                if (pos == HALL_ANGLE_INVALID) {
-                    printf("[HALL] hall=%u cmd=%s meas=%s pos=INVALID\n",
-                           (unsigned)hall,
-                           (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
-                           (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV");
-                } else {
-                    /* brad16 -> 度（+32768 四舍五入，避免 210° 显示成 209°） */
-                    uint16_t deg = (uint16_t)((((uint32_t)pos * 360u) + 32768u) >> 16);
-                    printf("[HALL] hall=%u cmd=%s meas=%s pos=%u deg (0x%04X)\n",
-                           (unsigned)hall,
-                           (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
-                           (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV",
-                           (unsigned)deg, (unsigned)pos);
-                }
-                if (dt == 0u) {
-                    printf("[HALL] dt60avg=0 (not established)\n");
-                } else {
-                    uint32_t dt_us = ((uint32_t)dt * 3657UL) / 1000UL;
-                    printf("[HALL] dt60avg=%u ticks (%lu us)\n",
-                           (unsigned)dt, (unsigned long)dt_us);
-                }
-
-                /* 每 PWM 增量 16.16（有符号）：符号由命令方向决定。
-                 * 拆成整数 + 4 位十进制小数打印，避免直接打印 16.16 原始值。 */
-                {
-                    HALL_StepQ16_t step = HALL_GetThetaStep();
-                    if (step == 0) {
-                        printf("[HALL] step=0 (not established)\n");
-                    } else {
-                        uint32_t mag = (step < 0) ? (uint32_t)(-step) : (uint32_t)step;
-                        uint16_t whole = (uint16_t)(mag >> 16);
-                        uint16_t frac  = (uint16_t)(mag & 0xFFFFu);
-                        uint16_t frac_dec = (uint16_t)(((uint32_t)frac * 10000u + 32768u) >> 16);
-                        printf("[HALL] step=%s%u.%04u\n",
-                               (step < 0) ? "-" : "",
-                               (unsigned)whole, (unsigned)frac_dec);
-                    }
-                }
-            }
-
-#if 0 /* 调试块:每 500ms 调用,Debug_Report 内部 10s 分频打印(0=关闭) */
+            /* 调试监控：5s 打印一次（内部 10 分频），含电流/状态/Hall/角度 */
             Debug_Report();
-#endif
         }
     }
 

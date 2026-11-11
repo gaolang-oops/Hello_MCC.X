@@ -55,6 +55,10 @@ uint16_t MC_Ramp_GetCurrentDuty(void);
 /* 强制清零占空比影子（停机用） */
 void MC_Ramp_ForceZero(void);
 
+/* 请求缓停：忽略 target provider，把 current_duty 按正常缓变速率降到 0。
+ * 到 0 后自动清除请求；可重复调用。 */
+void MC_Ramp_RequestStop(void);
+
 /* 获取缓变句柄指针（供 Motor_Handle_t 聚合） */
 Ramp_Handle_t* MC_Ramp_GetHandle(void);
 
