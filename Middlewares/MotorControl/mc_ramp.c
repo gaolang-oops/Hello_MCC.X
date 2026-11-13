@@ -16,6 +16,12 @@
 #include "mc_services.h"
 #include <stdlib.h>   /* abs */
 
+/* 缓变步进按 PWM 满量程选档（同一段代码，两种驱动模式的满量程不同）：
+ *   SPWM  : 满量程 3500，静止时同一 duty 步进的相电流约为六步的 4 倍，
+ *           故步进取 100（约 400/35），避免第二步 800 就把电流推到 2.5A 阈值。
+ *   SIXSTEP: 满量程 7000，保持台架确认过的 400/50/400。
+ * 判据用 MC_DUTY_FULLSCALE（mc_services.h 转发 BSP 派生值）。
+ * 注意：该宏展开后含 (uint16_t) 强制转换，不能放进 #if，故在 Init 内选档。 */
 static Ramp_Handle_t s_ramp = {
     .step_big       = RAMP_STEP_BIG,
     .step_small     = RAMP_STEP_SMALL,
@@ -36,6 +42,19 @@ void MC_Ramp_Init(void)
     s_ramp.last_tick_ms = MC_GetTickMs();
     s_target_provider   = MC_GetKnobSpeed;   /* 复位为默认旋钮直驱 */
     s_stop_request      = false;
+
+    /* 按 PWM 满量程选缓变档位：
+     *   SPWM(3500)  : 100/25/100（静止电流约为六步同一步进的 4 倍）
+     *   六步(7000)  : 400/50/400（台架确认值，保持不变） */
+    if (MC_DUTY_FULLSCALE < 4000u) {
+        s_ramp.step_big   = 100u;
+        s_ramp.step_small = 25u;
+        s_ramp.threshold  = 100u;
+    } else {
+        s_ramp.step_big   = RAMP_STEP_BIG;
+        s_ramp.step_small = RAMP_STEP_SMALL;
+        s_ramp.threshold  = RAMP_THRESHOLD;
+    }
 }
 
 void MC_Ramp_RequestStop(void)
@@ -59,6 +78,18 @@ void MC_Ramp_ForceZero(void)
 {
     s_ramp.target_duty  = 0;
     s_ramp.current_duty = 0;
+    s_stop_request      = false;
+}
+
+void MC_Ramp_HoldDuty(uint16_t duty)
+{
+    if (duty > MC_DUTY_FULLSCALE) {
+        duty = MC_DUTY_FULLSCALE;
+    }
+
+    s_ramp.target_duty  = duty;
+    s_ramp.current_duty = duty;
+    s_ramp.last_tick_ms = MC_GetTickMs();
     s_stop_request      = false;
 }
 

@@ -28,6 +28,7 @@
 static Motor_State_e s_motor_state = MOTOR_STATE_STOPPED;
 static uint16_t s_bootstrap_start_ms = 0;        /* 自举充电起始时间戳 */
 static uint16_t s_ready_ms = 0;                  /* READY 态停留计时 */
+static uint16_t s_startup_ms = 0;                /* STARTUP 启动保持起始时间戳 */
 static Motor_Cmd_e s_command = MOTOR_CMD_NONE;   /* 一次性命令锁存（应用层写，状态机消费清零）*/
 static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合）*/
 
@@ -151,6 +152,7 @@ void Motor_Init(void) {
     s_motor_state = MOTOR_STATE_STOPPED;
     s_command     = MOTOR_CMD_NONE;
     s_ready_ms    = 0;
+    s_startup_ms  = 0;
     MC_Ramp_Init();
 
     /* 两模式共用：过流保护先注册，保证 50µs 回调里保护先于角度/调制 */
@@ -281,7 +283,9 @@ void Motor_Tick(void) {
 
         case MOTOR_STATE_READY:
             /* 就绪：PWM 使能，自举已充，等旋钮指令。
-             * 旋钮 ≥ READY_MIN_KNOB → RUNNING（SPWM 12% / 六步 8%）
+             * 旋钮 ≥ READY_MIN_KNOB：
+             *   SPWM  → STARTUP（固定低 duty 500ms，再进 RUNNING）
+             *   六步  → 直接 RUNNING
              * 超时30s且旋钮=0 → STOPPED */
             if (MC_GetKnobSpeed() >= READY_MIN_KNOB_UQ16) {
             	/* 重置霍尔边沿计时基准:把 HALL_TIMEOUT 窗口从"进入运行"起算,
@@ -291,14 +295,32 @@ void Motor_Tick(void) {
                 /* 静止时 dt=0 会让转子角积分冻结；用 50rpm 种子让角度立即旋转，
                  * 真实 Hall 沿到来后由 HALL_UpdateDt 自动替换。六步换相不需要。 */
                 Motor_SeedRotorSpeed();
-#endif
+                /* 启动保持：先固定低 duty，让转子加速、反电动势建立；
+                 * 500ms 后再进 RUNNING，由 MC_Ramp_Step 按旋钮目标继续缓变。
+                 * 驱动使能在 STARTUP 入口完成（SPWM 先预置 50% 零矢量再交还互补）。 */
+                MC_Ramp_HoldDuty(MOTOR_STARTUP_DUTY);
+                s_startup_ms = MC_GetTickMs();
+                Drive_Enable(true);
+                s_motor_state = MOTOR_STATE_STARTUP;
+#else
             	/* 驱动使能（模式分发）：各模式在自身 Enable(true) 内完成安全预置——
                  * 六步先置 PDC=0 再恢复上桥 PWM + 用当前 Hall 建立换相初态；
                  * SPWM 先预置 50% 零矢量再交还互补自主控制。 */
                 Drive_Enable(true);
                 s_motor_state = MOTOR_STATE_RUNNING;
+#endif
             } else if (++s_ready_ms >= READY_TIMEOUT_MS) {
                 s_motor_state = MOTOR_STATE_STOPPED;
+            }
+            break;
+
+        case MOTOR_STATE_STARTUP:
+            /* 仅 SPWM 进入：固定低 duty，等转子加速、反电动势建立。
+             * 输出由 50µs Motor_Tick50us → Drive_Output 负责（六步 READY 直接进 RUNNING，不经过此态）。
+             * 时间到进 RUNNING；RUNNING 的 MC_Ramp_Step 会从当前 duty 继续
+             * 按旋钮目标缓变（不会回到 0 重新爬）。 */
+            if ((uint16_t)(MC_GetTickMs() - s_startup_ms) >= MOTOR_STARTUP_MS) {
+                s_motor_state = MOTOR_STATE_RUNNING;
             }
             break;
 

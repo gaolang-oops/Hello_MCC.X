@@ -51,6 +51,19 @@ int16_t MC_GetCurrentIbmA(void)   { return BSP_ADC_GetCurrentIbMa(); }
 int16_t MC_GetCurrentIcmA(void)   { return BSP_ADC_GetCurrentIcMa(); }
 int16_t MC_GetCurrentIbusmA(void) { return BSP_ADC_GetCurrentIbusMa(); }
 
+/* 同一拍的 raw 快照（诊断用）。BSP 数据指针指向 ISR 已更新完的 s_adcData，
+ * 4 个 uint16 读均为单字原子；仅在过流跳闸时调用，不在 50us 热路径。 */
+void MC_GetCurrentRawSnapshot(uint16_t *ia, uint16_t *ib,
+                              uint16_t *ic, uint16_t *ibus)
+{
+    const volatile ADC_Data_t *d = BSP_ADC_GetData();
+
+    *ia   = d->raw_ia;
+    *ib   = d->raw_ib;
+    *ic   = d->raw_ic;
+    *ibus = d->raw_ibus;
+}
+
 /* 纯转发：过流判定封装在 BSP 层（raw 比较 + 标定预计算）*/
 void MC_OC_Configure(uint16_t threshold_mA) { BSP_ADC_OC_Configure(threshold_mA); }
 bool MC_OC_IsPhaseOver(void)                { return BSP_ADC_OC_IsPhaseOver(); }

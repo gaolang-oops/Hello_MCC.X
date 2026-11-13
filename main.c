@@ -181,20 +181,16 @@ static void MAIN_SECTION SelfCheck_Report(void)
  * 每 500ms(Tier-3)调用一次，内部分频后才真正打印。
  * 仅允许主循环上下文调用，严禁 ISR 内调用（GetHandle 非原子快照）。
  */
-static void MAIN_SECTION Debug_Report(void)
+static void /*__attribute__((unused))*/ MAIN_SECTION Debug_Report(void)
 {
 	static uint16_t s_cnt = 0;
 	if (++s_cnt < 10) {
 		return;
 	}
 	s_cnt = 0;
-	printf("============================================\n");
+	printf("\n============================================\n");
 	Motor_Handle_t *m = Motor_GetHandle();
-	/* 采样数据保持直接调用(不纳入 motor handle) */
-	printf("Vbus=%lu mV  Ia=%d  Ib=%d  Ic=%d  Ibus=%d mA\n",
-	       (uint32_t)BSP_ADC_GetVbusMv(),
-	       MC_GetCurrentIamA(), MC_GetCurrentIbmA(),
-	       MC_GetCurrentIcmA(), MC_GetCurrentIbusmA());
+
 	/* 电机状态经统一句柄读取 */
 	printf("mode=%d state=%d fault=0x%X hall=%d en=%d duty=%u/%u age=%lums\n",
 	       m->drive_mode,
@@ -218,7 +214,6 @@ static void MAIN_SECTION Debug_Report(void)
 		HALL_Dir_e dir_cmd  = HALL_GetCmdDirection();
 		HALL_Dir_e dir_meas = HALL_GetMeasuredDirection();
 		uint16_t pos = HALL_GetHallRotorPosition();
-		uint16_t dt  = HALL_GetEdgeDtTicks();
 
 		if (pos == HALL_ANGLE_INVALID) {
 			printf("hall cmd=%s meas=%s pos=INVALID\n",
@@ -226,34 +221,37 @@ static void MAIN_SECTION Debug_Report(void)
 			       (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV");
 		} else {
 			uint16_t deg = (uint16_t)((((uint32_t)pos * 360u) + 32768u) >> 16);
-			printf("hall cmd=%s meas=%s pos=%u deg (0x%04X)\n",
+			printf("dir cmd=%s meas=%s pos=%u deg (0x%04X)\n",
 			       (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
 			       (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV",
 			       (unsigned)deg, (unsigned)pos);
 		}
-
-		if (dt == 0u) {
-			printf("dt60=0 (not established)  step=0\n");
-		} else {
-			uint32_t dt_us = ((uint32_t)dt * 3657UL) / 1000UL;
-			HALL_StepQ16_t step = HALL_GetThetaStep();
-
-			if (step == 0) {
-				printf("dt60=%u ticks (%lu us)  step=0\n",
-				       (unsigned)dt, (unsigned long)dt_us);
-			} else {
-				uint32_t mag = (step < 0) ? (uint32_t)(-step) : (uint32_t)step;
-				uint16_t whole = (uint16_t)(mag >> 16);
-				uint16_t frac  = (uint16_t)(mag & 0xFFFFu);
-				uint16_t frac_dec = (uint16_t)(((uint32_t)frac * 10000u + 32768u) >> 16);
-
-				printf("dt60=%u ticks (%lu us)  step=%s%u.%04u\n",
-				       (unsigned)dt, (unsigned long)dt_us,
-				       (step < 0) ? "-" : "",
-				       (unsigned)whole, (unsigned)frac_dec);
-			}
-		}
 	}
+	printf("============================================\n");
+}
+
+/*
+ * Fault_Snapshot_PrintOnce
+ * 过流现场快照：跳闸后由主循环 500ms 分支打印一次。
+ * ISR 只负责留现场(MC_Fault.c)，printf 放主循环，避免阻塞 50µs 保护链路。
+ * 字段：tick/哪一路越限/三相与母线 mA 与 raw。
+ */
+static void MAIN_SECTION Fault_Snapshot_PrintOnce(void)
+{
+    MC_Fault_Snapshot_t s;
+
+    if (!MC_Fault_SnapshotTake(&s)) {
+        return;
+    }
+
+    /* mask: 1=Ia 2=Ib 4=Ic 8=Ibus */
+    printf("[OC-SNAP] t=%ums mask=0x%X "
+           "Ia=%d/%u Ib=%d/%u Ic=%d/%u Ibus=%d/%u\n",
+           (unsigned)s.tick_ms, (unsigned)s.over_mask,
+           (int)s.ma_ia, (unsigned)s.raw_ia,
+           (int)s.ma_ib, (unsigned)s.raw_ib,
+           (int)s.ma_ic, (unsigned)s.raw_ic,
+           (int)s.ma_ibus, (unsigned)s.raw_ibus);
 }
 
 int MAIN_SECTION main(void) {
@@ -318,7 +316,9 @@ int MAIN_SECTION main(void) {
             BSP_ADC_TimeBase_Clear500msFlag();
             LED_Toggle(LED0);
 
-            /* 调试监控：5s 打印一次（内部 10 分频），含电流/状态/Hall/角度 */
+            /* 过流现场：跳闸后打印一次（ISR 只留现场，printf 在主循环） */
+            Fault_Snapshot_PrintOnce();
+
             Debug_Report();
         }
     }

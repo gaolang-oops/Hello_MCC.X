@@ -17,10 +17,13 @@
 extern "C" {
 #endif
 
-/* 缓变参数 -- 编译期默认值，运行时由结构体字段承载（可调） */
-#define RAMP_STEP_BIG        400U    /* 差距>阈值 时的大步进 */
-#define RAMP_STEP_SMALL       50U    /* 差距≤阈值 时的小步进 */
-#define RAMP_THRESHOLD       400U    /* 大/小步进分界 */
+/* 缓变参数 -- 以下为六步参考值；实际初始化在 mc_ramp.c 按 PWM 满量程选档:
+ *   SPWM(满量程 3500)   : step_big=100, step_small=25, threshold=100
+ *   六步(满量程 7000)   : step_big=400, step_small=50, threshold=400
+ * 运行时仍由 Ramp_Handle_t 字段承载（可调）。 */
+#define RAMP_STEP_BIG        400U    /* 六步参考：差距>阈值 时的大步进 */
+#define RAMP_STEP_SMALL       50U    /* 六步参考：差距≤阈值 时的小步进 */
+#define RAMP_THRESHOLD       400U    /* 六步参考：大/小步进分界 */
 #define RAMP_PERIOD_MS        50U    /* 缓变节拍周期(ms) */
 
 /* 目标速度来源回调。返回目标速度 UQ0.16（0~65536 ↔ 0~100%）。
@@ -54,6 +57,11 @@ uint16_t MC_Ramp_GetCurrentDuty(void);
 
 /* 强制清零占空比影子（停机用） */
 void MC_Ramp_ForceZero(void);
+
+/* 启动保持：把 target/current 直接置为固定 duty，并重置缓变计时。
+ * 供 READY→STARTUP 使用：固定低 duty 输出一段时间，等转子加速后再进 RUNNING。
+ * 不做缓变，调用后立即生效；入参超过满量程时自动钳位。 */
+void MC_Ramp_HoldDuty(uint16_t duty);
 
 /* 请求缓停：忽略 target provider，把 current_duty 按正常缓变速率降到 0。
  * 到 0 后自动清除请求；可重复调用。 */

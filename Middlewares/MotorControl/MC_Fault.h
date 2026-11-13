@@ -47,6 +47,22 @@ typedef enum {
 
 } MC_Fault_e;
 
+/* ---- 过流现场快照（只读） ----
+ * 捕获点: MC_OverCurrentCheck() 内、驱动失能钩子与 MC_SetFault() 之前，
+ *         保证电流/raw 是"跳闸前"的值。
+ * 打印点: 主循环 Tier-3 (main.c 500ms 分支)，经 MC_Fault_SnapshotTake() 取一次。
+ * 重新武装: 故障被清除后，下一次 OVER_CURRENT 上升沿重新捕获并覆盖旧快照。
+ * 保留字段只够定位"哪一路、多大电流"：
+ *   tick_ms + over_mask + 三相/母线 mA 与 raw。
+ */
+typedef struct {
+    /* —— OC 触发瞬间，ADC ISR 内捕获 —— */
+    uint16_t tick_ms;        /* 触发时刻 ms */
+    uint16_t over_mask;      /* bit0=Ia bit1=Ib bit2=Ic bit3=Ibus */
+    uint16_t raw_ia, raw_ib, raw_ic, raw_ibus;
+    int16_t  ma_ia, ma_ib, ma_ic, ma_ibus;
+} MC_Fault_Snapshot_t;
+
 /* 模块初始化：清标志（冷启动干净态）+ 经 mc_services 注册 50us 过流回调。
  * 调用时机：由 Motor_Init 统一编排（顺序：BSP_ADC_Int_Register 之后、GlobalEnable 之前）。
  *           "之后"是推荐而非硬性，因为 s_cb50us 静态初始化为 NULL，任何时刻注册都安全。 */
@@ -61,6 +77,10 @@ void MC_Fault_Init(void);
  * 否则六步下 Hall ISR 可能在状态机接管前重新使能输出。 */
 typedef void (*MC_Fault_DriveOffHook_t)(void);
 void MC_Fault_SetDriveOffHook(MC_Fault_DriveOffHook_t hook);
+
+/* 取一份未打印的过流快照：有则拷贝到 *out 并清 pending，返回 true。
+ * 仅在主循环上下文调用；内部短临界区，与 ADC ISR 并发安全。 */
+bool MC_Fault_SnapshotTake(MC_Fault_Snapshot_t *out);
 
 /* ---- 标志位管理（全锁存策略） ----
  * 置位：ISR（MC_OverCurrentCheck / MC_NotifyCommutation）写。

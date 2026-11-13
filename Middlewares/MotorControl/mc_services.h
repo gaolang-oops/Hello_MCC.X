@@ -68,6 +68,12 @@ int16_t  MC_GetCurrentIbmA(void);
 int16_t  MC_GetCurrentIcmA(void);
 int16_t  MC_GetCurrentIbusmA(void);
 
+/* 三相/母线电流的 ADC 原始值快照（过流现场诊断用，非热路径）。
+ * raw 标定细节仍封装在 BSP；本接口只把同一拍的 4 个 raw 一次性带出，
+ * 便于现场区分"真实过流"与"单点采样尖峰/贴轨"。 */
+void     MC_GetCurrentRawSnapshot(uint16_t *ia, uint16_t *ib,
+                                  uint16_t *ic, uint16_t *ibus);
+
 /* ============ 过流保护（OCP）语义接口 ============
  * 对 motor 层只暴露物理量(mA)与判定结果(bool)，raw 换算/比较封装在 BSP 层。
  *   Configure —— 初始化时调用一次，传入过流阈值(mA)；内部预计算 raw 比较值。

@@ -56,6 +56,18 @@
 /* 自举电容预充电时长（计时职责归状态机，故宏定义于此）*/
 #define BOOTSTRAP_CHARGE_MS         50U
 
+/* SPWM 启动保持（READY→STARTUP）：固定低 duty 让转子加速、反电动势建立，
+ * 时间到再进 RUNNING 按旋钮目标继续缓变。
+ *   duty 500 / 3500 ≈ 14.3% 满量程 ≈ 3.4V 相电压；
+ * 六步不进入此态（READY 直接进 RUNNING），常量置 0。 */
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
+#define MOTOR_STARTUP_DUTY          500U
+#define MOTOR_STARTUP_MS            500U
+#else
+#define MOTOR_STARTUP_DUTY          0U
+#define MOTOR_STARTUP_MS            0U
+#endif
+
 /* SPWM 调制中点（50% 共模零矢量，三相差压=0）：自举充电占空用（本层唯一直用点）。
  * spwm.c 侧同值同源宏为 HALF_OF_DUTY_FULLSCALE（调制基线 + 使能交接零矢量）。
  * 宏体引用 MC_DUTY_FULLSCALE 属惰性展开，消费方 motor_control.c 已含 mc_services.h。 */
@@ -77,6 +89,7 @@ typedef enum {
     MOTOR_STATE_BOOTSTRAP,     // 瞬态：自举充电启动(六步=下管常通 HOFF_LON；SPWM=下桥 PWM HOFF_LPWM)，立即迁移到 CHARGING
     MOTOR_STATE_CHARGING,      // 稳态：等待自举电容充电 50ms 完成
     MOTOR_STATE_READY,         // 就绪：充电完成，PWM 使能，等旋钮指令；超时回 STOPPED
+    MOTOR_STATE_STARTUP,       // SPWM 启动保持：固定低 duty，等转子加速/反电动势建立
     MOTOR_STATE_RUNNING,       // 运行：按指令占空比输出
 } Motor_State_e;
 

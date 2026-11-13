@@ -52,9 +52,14 @@
 /* ---- 模块状态 ---- */
 static volatile uint16_t  s_fault_flags = 0;
 static volatile uint16_t  s_last_commutate_tick = 0;
+static uint16_t           s_blanking_ticks = 0;   /* 六步=BLANKING_TICKS；SPWM=0（无换相尖峰） */
 static int32_t            s_ibus_filt = 0;   /* Ibus 一阶 IIR 低通输出(mA)；主循环读写，非 ISR */
 /* 驱动失能钩子：Motor_Init 注入，过流 ISR 调用；未注入时为 NULL */
 static volatile MC_Fault_DriveOffHook_t s_drive_off_hook = NULL;
+
+/* ---- 过流现场快照（ISR 写、主循环取；pending 置位前先写完） ---- */
+static volatile MC_Fault_Snapshot_t      s_oc_snapshot;
+static volatile bool                     s_oc_snapshot_pending = false;
 
 
 /* ---- 公共 API ---- */
@@ -64,6 +69,15 @@ void MC_Fault_Init(void)
     s_fault_flags = 0;
     s_last_commutate_tick = 0;
     s_ibus_filt = 0;
+    s_oc_snapshot_pending = false;
+
+    /* 换相 blanking 只属于六步：SPWM 连续调制，没有换相尖峰。
+     * 若 SPWM 也保留 BLANKING_TICKS，s_last_commutate_tick 不被 MC_NotifyCommutation
+     * 更新（恒 0），会在 50µs tick 每 3.2768s 回卷时产生约 150µs 的意外盲区。
+     * 用满量程区分模式：SPWM 3500 -> 0；六步 7000 -> BLANKING_TICKS。 */
+    s_blanking_ticks = (MC_DUTY_FULLSCALE < 4000u)
+                     ? 0u
+                     : (uint16_t)BLANKING_TICKS;
     /* 把过流阈值(mA)下发给 BSP，由其预计算 raw 比较值（含一次除法，仅启动期）。
      * 之后 ISR 热路径 MC_OC_Is* 仅做字面量比较，无运行时换算。 */
     MC_OC_Configure(OC_THRESHOLD_MA);
@@ -74,6 +88,24 @@ void MC_Fault_Init(void)
 void MC_Fault_SetDriveOffHook(MC_Fault_DriveOffHook_t hook)
 {
     s_drive_off_hook = hook;   /* 单字写原子；须在 GlobalEnable 前注入 */
+}
+
+bool MC_Fault_SnapshotTake(MC_Fault_Snapshot_t *out)
+{
+    uint16_t ipl_saved;
+    bool pending;
+
+    /* 与 ADC ISR 内的快照写入互斥：短临界区只做一次结构体拷贝 */
+    SET_AND_SAVE_CPU_IPL(ipl_saved, 7);
+	/* ADC 50us ISR中会进行过流检测，如果过流会填充s_oc_snapshot，并置位 pending */
+    pending = s_oc_snapshot_pending;
+    if (pending) {
+        *out = s_oc_snapshot;
+        s_oc_snapshot_pending = false;
+    }
+    RESTORE_CPU_IPL(ipl_saved);
+
+    return pending;
 }
 
 void MC_SetFault(MC_Fault_e f)
@@ -115,8 +147,8 @@ void MC_NotifyCommutation(void)
 
 void MC_OverCurrentCheck(void)
 {
-    /* 1) Blanking:换相尖峰屏蔽期内跳过 */
-    if ((uint16_t)(MC_GetTick50us() - s_last_commutate_tick) < BLANKING_TICKS) {
+    /* 1) Blanking:六步换相尖峰屏蔽期内跳过（SPWM 下 s_blanking_ticks=0，不屏蔽） */
+    if ((uint16_t)(MC_GetTick50us() - s_last_commutate_tick) < s_blanking_ticks) {
         return;
     }
 
@@ -124,6 +156,39 @@ void MC_OverCurrentCheck(void)
      *    阈值 OC_THRESHOLD_MA 已在 Init 时经 MC_OC_Configure 下发预计算。
      *    相电流双向判定(Ia/Ib/Ic)，Ibus 单向上限判定。 */
     if (MC_OC_IsPhaseOver() || MC_OC_IsIbusOver()) {
+        int16_t ia, ib, ic, ibus;
+
+        /* ---- 过流现场快照：仅在本次 OVER_CURRENT 上升沿捕获 ----
+         * 必须发生在驱动失能钩子与 MC_SetFault 之前：
+         *   - 取到的是跳闸前的 state/duty/角度/电流；
+         *   - 锁存后每 50us 仍会重新判定，用上升沿条件避免反复覆盖。
+         * 阈值掩码从同一组 mA 值计算，只有跳闸时才做，热路径不变。 */
+        if ((s_fault_flags & (uint16_t)MC_FAULT_OVER_CURRENT) == 0u) {
+            MC_Fault_Snapshot_t snap;
+            uint16_t mask = 0u;
+
+            ia   = MC_GetCurrentIamA();
+            ib   = MC_GetCurrentIbmA();
+            ic   = MC_GetCurrentIcmA();
+            ibus = MC_GetCurrentIbusmA();
+
+            if (abs((int)ia)   > (int)OC_THRESHOLD_MA) mask |= 0x01u;
+            if (abs((int)ib)   > (int)OC_THRESHOLD_MA) mask |= 0x02u;
+            if (abs((int)ic)   > (int)OC_THRESHOLD_MA) mask |= 0x04u;
+            if (abs((int)ibus) > (int)OC_THRESHOLD_MA) mask |= 0x08u;
+
+            snap.tick_ms     = MC_GetTickMs();
+            snap.over_mask   = mask;
+            MC_GetCurrentRawSnapshot(&snap.raw_ia, &snap.raw_ib,
+                                     &snap.raw_ic, &snap.raw_ibus);
+            snap.ma_ia   = ia;
+            snap.ma_ib   = ib;
+            snap.ma_ic   = ic;
+            snap.ma_ibus = ibus;
+
+            s_oc_snapshot         = snap;
+            s_oc_snapshot_pending = true;
+        }
 
         /* L1 快保护：ADC ISR 内立即处置（执行MC_OverCurrentCheck）。
          * 过流场景下 MOS 电流可达几十~上百 A，1ms 足以烧穿，必须 μs 级响应。

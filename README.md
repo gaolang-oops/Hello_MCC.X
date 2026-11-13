@@ -24,7 +24,7 @@
   - **L1 软件快保护**（50μs ADC ISR）：瞬时过流 → μs 级立即关断 PWM
   - **L2 状态机**（1ms）：过压/欠压/过载(IIR)/霍尔丢失，进入 FAULT 吸收态锁存
 - **分层任务框架**（Tier-0~4）：按时间常数分层，ADC ISR 作系统时基源
-- **状态机**：`FAULT → STOPPED → BOOTSTRAP → CHARGING → READY → RUNNING`
+- **状态机**：`FAULT → STOPPED → BOOTSTRAP → CHARGING → READY → STARTUP → RUNNING`
 - **双命令通道**：按键 UI（短按启停/长按清故障）+ UART 协议（查询/清除/故障推送）
 - **故障可视化**：串口协议（推拉混合）+ LED3 编码闪烁（无串口现场）
 - **自举电容预充**：进入运行前充电 50ms（六步=下管常通；SPWM=下桥 50% PWM 充电，风车态限流+交接占空预置），跨拍天然关断裕量
