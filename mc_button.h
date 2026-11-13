@@ -5,9 +5,9 @@
  * 非阻塞消抖，1ms 节拍调用。
  *
  * 按键分工（下发一次性命令，状态机消费即清零）：
- *   KEY0 (RC1)  短按 → 启动命令（MOTOR_CMD_START）
- *   KEY1 (RC2)  短按 → 停机命令（MOTOR_CMD_STOP，电机硬停）
- *   KEY2 (RC11) 长按≥2s → 清故障（MC_ClearAllFaults）
+ *   KEY0 (RC1)  短按/长按 → 启动命令（MOTOR_CMD_START）
+ *   KEY1 (RC2)  短按/长按 → 停机命令（MOTOR_CMD_STOP，电机硬停）
+ *   KEY2 (RC11) 长按≥2s   → 清故障（MC_ClearAllFaults），短按忽略
  *
  * 依赖方向(向下):
  *   mc_button -> bsp_gpio（KEY_Get_State）

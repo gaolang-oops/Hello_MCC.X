@@ -295,6 +295,8 @@ void Motor_Tick(void) {
                 /* 静止时 dt=0 会让转子角积分冻结；用 50rpm 种子让角度立即旋转，
                  * 真实 Hall 沿到来后由 HALL_UpdateDt 自动替换。六步换相不需要。 */
                 Motor_SeedRotorSpeed();
+                /* 启动前按当前 Hall 重新播种，避免自举/惰行期间积分角漂移。 */
+                RotorAngle_Seed();
                 /* 启动保持：先固定低 duty，让转子加速、反电动势建立；
                  * 500ms 后再进 RUNNING，由 MC_Ramp_Step 按旋钮目标继续缓变。
                  * 驱动使能在 STARTUP 入口完成（SPWM 先预置 50% 零矢量再交还互补）。 */
