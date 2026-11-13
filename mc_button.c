@@ -7,6 +7,7 @@
  * 事件 → 命令映射（一次性命令，状态机消费即清零）：
  *   KEY0 短按/长按 → Motor_SetCommand(MOTOR_CMD_START)
  *   KEY1 短按/长按 → Motor_SetCommand(MOTOR_CMD_STOP)（硬停：立即关 PWM）
+ *   KEY2 短按        → Motor_SetCommand(MOTOR_CMD_STOP)（硬停：立即关 PWM）
  *   KEY2 长按        → MC_ClearAllFaults()            （仅当存在故障时）
  */
 
@@ -124,8 +125,11 @@ void MOTOR_SECTION MCButton_Tick1ms(void) {
             break;
     }
 
-    /* KEY2：仅长按清故障，短按忽略 */
+    /* KEY2：短按停机，长按清故障 */
     switch (btn_press_tick(&s_key2, KEY2)) {
+        case BTN_EV_SHORT:
+            Motor_SetCommand(MOTOR_CMD_STOP);
+            break;
         case BTN_EV_LONG:
             /* 清故障：状态机 FAULT 态下拍检测 !MC_HasAnyFault() 自动转 STOPPED。
              * 无须下发停机命令 —— 故障态本就硬关，且命令模型无电平残留需清理。 */
