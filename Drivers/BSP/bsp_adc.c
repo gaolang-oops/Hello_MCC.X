@@ -269,10 +269,20 @@ static uint16_t s_oc_ibus_hi  = 0xFFFFu;   /* Ibus raw 上限 */
 
 void ADC_SECTION BSP_ADC_OC_Configure(uint16_t threshold_mA)
 {
-    uint16_t delta = ADC_MA_TO_PHASE_RAWDELTA(threshold_mA);
+    uint16_t delta   = ADC_MA_TO_PHASE_RAWDELTA(threshold_mA);
+    uint16_t ibus_hi = ADC_MA_TO_IBUS_RAW(threshold_mA);
+
+    /* 防呆：阈值必须落在采样链路的可测范围内，否则 raw 永远到不了比较值，
+     * 过流保护会"静默失效"（编译/运行都不报错，只是永不跳闸）。
+     *   相电流: 单边线性满量程 raw 475（=3.0A，运放 3.18V 饱和），留 5 raw 余量 -> <=470
+     *   Ibus  : 10-bit 上限 1023（=3.3A），留余量 -> <=1000
+     * 超范围直接 VERIFY 停机（与全工程启动自检风格一致），不静默降级。 */
+    VERIFY(delta <= 470u);
+    VERIFY(ibus_hi <= 1000u);
+
     s_oc_phase_hi = ADC_CURRENT_MIDPOINT + delta;
     s_oc_phase_lo = ADC_CURRENT_MIDPOINT - delta;
-    s_oc_ibus_hi  = ADC_MA_TO_IBUS_RAW(threshold_mA);
+    s_oc_ibus_hi  = ibus_hi;
 }
 
 bool ADC_SECTION BSP_ADC_OC_IsPhaseOver(void)

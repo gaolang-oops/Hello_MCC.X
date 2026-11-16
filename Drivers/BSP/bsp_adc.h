@@ -144,7 +144,10 @@ int16_t  BSP_ADC_GetCurrentIbusMa(void);
  *   Is*       —— ISR 热路径调用，仅做 raw 与预计算常量的字面量比较，
  *                无运行时除法/乘法/换算，响应 ≤50us。
  * 相电流为双向偏置（中点对称判定），Ibus 为单极性无偏置（仅上限判定）。
- * 默认未配置时为安全态（永不越限），须 Configure 后再使能过流检测。 */
+ * 默认未配置时为安全态（永不越限），须 Configure 后再使能过流检测。
+ * !! 阈值必须落在链路可测范围内：相电流 delta_raw <= 470（≈3.0A 满量程），
+ *    Ibus raw <= 1000（≈3.2A）。超范围会导致 raw 永远到不了比较值、保护静默失效，
+ *    故 Configure 内以 VERIFY 防呆停机。 */
 void BSP_ADC_OC_Configure(uint16_t threshold_mA);
 bool  BSP_ADC_OC_IsPhaseOver(void);
 bool  BSP_ADC_OC_IsIbusOver(void);
