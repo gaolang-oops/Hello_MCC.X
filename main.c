@@ -212,18 +212,18 @@ static void /*__attribute__((unused))*/ MAIN_SECTION Debug_Report(void)
 
 	/* Hall 方向 / 扇区进入角 / 60° dt / 每 PWM 步进 */
 	{
-		HALL_Dir_e dir_cmd  = HALL_GetCmdDirection();
+		HALL_Dir_e dir_ref  = HALL_GetDirection();
 		HALL_Dir_e dir_meas = HALL_GetMeasuredDirection();
 		uint16_t pos = HALL_GetHallRotorPosition();
 
 		if (pos == HALL_ANGLE_INVALID) {
-			printf("hall cmd=%s meas=%s pos=INVALID\n",
-			       (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
+			printf("hall ref=%s meas=%s pos=INVALID\n",
+			       (dir_ref == HALL_DIR_FWD) ? "FWD" : "REV",
 			       (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV");
 		} else {
 			uint16_t deg = (uint16_t)((((uint32_t)pos * 360u) + 32768u) >> 16);
-			printf("dir cmd=%s meas=%s pos=%u deg (0x%04X)\n",
-			       (dir_cmd == HALL_DIR_FWD) ? "FWD" : "REV",
+			printf("dir ref=%s meas=%s pos=%u deg (0x%04X)\n",
+			       (dir_ref == HALL_DIR_FWD) ? "FWD" : "REV",
 			       (dir_meas == HALL_DIR_FWD) ? "FWD" : "REV",
 			       (unsigned)deg, (unsigned)pos);
 		}

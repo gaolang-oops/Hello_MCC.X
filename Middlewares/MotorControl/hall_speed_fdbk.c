@@ -14,7 +14,7 @@
  *     并对最近 6 个有效间隔做滑动平均
  *   - 通过观察者回调 HALL_RegisterOnEdge() 向上层(drive)通知 Hall 跳变
  *   - 由相邻 Hall 跳变判别实测方向（仅供监督/诊断）
- *   - 命令方向由控制层经 HALL_SetCmdDirection() 下发，决定 step 符号
+ *   - 参考方向由控制层经 HALL_SetDirection() 锁存，决定 step 符号与进入角查表
  *   - 种子初始化，避免冷启动 hall_status=0
  *
  * 依赖方向：hall_speed_fdbk -> mc_services -> bsp_ICx
@@ -92,10 +92,10 @@ static volatile uint8_t hall_status;
 /* 实测方向：由 HALL_UpdateDirection 在每次合法 Hall 跳变后更新，仅用于监督/诊断。 */
 static volatile HALL_Dir_e s_dir_meas = HALL_DIR_FWD;
 
-/* 命令方向：控制层期望的旋转方向，决定 HALL_UpdateStep 的符号。
- * 默认 FWD；由 HALL_SetCmdDirection 设置。
+/* 参考方向：观测器内部持有的旋转参考系，决定 HALL_UpdateStep 的符号与进入角查表。
+ * 默认 FWD；由 HALL_SetDirection 写入，本模块是唯一持有者。
  * 写方：主循环；读方：Hall ISR。单字写原子。 */
-static volatile HALL_Dir_e s_dir_cmd = HALL_DIR_FWD;
+static volatile HALL_Dir_e s_dir_ref = HALL_DIR_FWD;
 
 /* s_prev_hall 仅 ISR 访问，用于计算相邻跳变在正转角度表上的差值。 */
 static volatile uint8_t    s_prev_hall = 0u;
@@ -261,25 +261,25 @@ HALL_Dir_e HALL_GetMeasuredDirection(void) {
     return s_dir_meas;   /* volatile 单字读取原子 */
 }
 
-HALL_Dir_e HALL_GetCmdDirection(void) {
-    return s_dir_cmd;    /* volatile 单字读取原子 */
+HALL_Dir_e HALL_GetDirection(void) {
+    return s_dir_ref;    /* volatile 单字读取原子 */
 }
 
-void HALL_SetCmdDirection(HALL_Dir_e dir) {
-    /* 命令方向由控制层设置；Hall 沿只更新 s_dir_meas。
+void HALL_SetDirection(HALL_Dir_e dir) {
+    /* 参考方向由控制层设置；Hall 沿只更新 s_dir_meas。
      * 与 Hall ISR 并发：单字写，原子。 */
-    s_dir_cmd = dir;
+    s_dir_ref = dir;
 }
 
 uint16_t HALL_GetHallRotorPosition(void) {
-	/* 控制参考系：与 step 同用命令方向，避免沿口重同步与积分参考系不一致。 */
+	/* 控制参考系：与 step 同用参考方向，避免沿口重同步与积分参考系不一致。 */
     uint8_t hall = hall_status;
     const uint16_t *table;
 
     if (hall > 7u) {
         return HALL_ANGLE_INVALID;   /* 防御性钳位 */
     }
-    table = (s_dir_cmd == HALL_DIR_REV) ? s_hall_angle_rev : s_hall_angle_fwd;
+    table = (s_dir_ref == HALL_DIR_REV) ? s_hall_angle_rev : s_hall_angle_fwd;
     return table[hall];   /* 0/7 表项为 HALL_ANGLE_INVALID */
 }
 
@@ -345,7 +345,7 @@ void HALL_SeedDt(uint16_t dt_ticks) {
     s_last_edge_tick_ms = MC_GetTickMs();
     RESTORE_CPU_IPL(ipl_saved);
 
-    HALL_UpdateStep(dt_ticks);   /* 内部带临界区，按命令方向取符号 */
+    HALL_UpdateStep(dt_ticks);   /* 内部带临界区，按参考方向取符号 */
 }
 
 /*
@@ -357,7 +357,7 @@ void HALL_SeedDt(uint16_t dt_ticks) {
  *     反转 5[210°] -> 1[150°]（查正转表），delta = -60°。
  *
  * 只更新实测方向 s_dir_meas，仅供监督/诊断；
- * 不修改命令方向 s_dir_cmd，因此不会影响 HALL_GetThetaStep() 的符号。
+ * 不修改参考方向 s_dir_ref，因此不会影响 HALL_GetThetaStep() 的符号。
  * 仅在 ISR 内、HALL_UpdateInputState 返回 true 后调用。
  */
 static void HALL_UpdateDirection(uint8_t hall) {
@@ -435,7 +435,7 @@ static uint8_t HALL_SectorCount(uint8_t prev, uint8_t cur) {
  * 把余数换算成 16 位小数。两者都是 native 32/16 除法。
  * 约束：商必须能放进 16 位；dt >= HALL_DT_MIN_TICKS=10 时
  *       q <= 149333/10 = 14933，满足。
- * 命令方向符号在此应用：FWD -> 正值，REV -> 负值（二进制补码）。
+ * 参考方向符号在此应用：FWD -> 正值，REV -> 负值（二进制补码）。
  * 实测方向 s_dir_meas 不参与本符号，仅用于监督/诊断。
  * 消费方统一 theta_u32 += (uint32_t)s_dt.step 即可。
  */
@@ -453,11 +453,11 @@ static void HALL_UpdateStep(uint16_t dt) {
         q    = __builtin_divmodud(HALL_STEP_K, dt, &rem);
         frac = __builtin_divud((uint32_t)rem << 16, dt);
 
-        /* 先拼成正的 16.16 幅值，再按命令方向取负（补码）。
+        /* 先拼成正的 16.16 幅值，再按参考方向取负（补码）。
          * 幅值上界：dt >= HALL_DT_MIN_TICKS=10 -> q <= 14933，
          * 故 step < 0x3A560000，转 int32_t 绝不会溢出。 */
         step = (int32_t)(((uint32_t)q << 16) | frac);
-        if (s_dir_cmd == HALL_DIR_REV) {
+        if (s_dir_ref == HALL_DIR_REV) {
             step = -step;
         }
     }

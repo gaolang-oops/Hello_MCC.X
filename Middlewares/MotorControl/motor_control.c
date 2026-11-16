@@ -16,8 +16,9 @@
  *   方向随启动命令携带，且仅在 STOPPED 态响应：运行中不能换向。
  *
  * 方向锁存（两段式）：
- *   s_direction  : 用户期望方向，STOPPED 收到 START_FWD/REV 时更新；
- *   s_active_dir : 已锁存到观测器的参考系，READY 且确认转子停稳后才更新。
+ *   s_direction : 用户期望方向，STOPPED 收到 START_FWD/REV 时更新；
+ *   观测器参考方向：由 HALL 模块唯一持有（HALL_SetDirection/GetDirection），
+ *   READY 且确认转子停稳后才由控制层写入，控制层不另存副本。
  *   两者分离是为了避免"转子还在旧方向惰行、观测器已按新方向积分"。
  */
 
@@ -37,7 +38,6 @@ static uint16_t s_ready_ms = 0;                  /* READY 态停留计时 */
 static uint16_t s_startup_ms = 0;                /* STARTUP 启动保持起始时间戳 */
 static Motor_Cmd_e s_command = MOTOR_CMD_NONE;   /* 一次性命令锁存（应用层写，状态机消费清零）*/
 static HALL_Dir_e  s_direction = HALL_DIR_FWD;   /* 期望方向（启动命令携带，仅 STOPPED 更新）*/
-static HALL_Dir_e  s_active_dir = HALL_DIR_FWD;  /* 已锁存到观测器的参考系（READY 停稳后更新）*/
 static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合）*/
 
 /* 输出门面（模式分发） */
@@ -88,7 +88,7 @@ static void Motor_Tick50us(void) {
 /*
  * 转子角 θr → SPWM 调制角 θmod
  *   FWD: θmod = θr + 90°（电压矢量落 q 轴，最大转矩）
- *   REV: θmod = θr − 90°（角增量已按命令方向取负，超前同样取负）
+ *   REV: θmod = θr − 90°（角增量已按参考方向取负，超前同样取负）
  * brad16 域直接加减，uint16 溢出即 360° 回卷；只取整数部分，
  * 分辨率 0.0055°，对 20kHz 调制足够（低 16 位小数不参与本次合成）。
  * 并发：RotorAngle_GetRotor16() 为 16 位单字读，原子。
@@ -96,7 +96,7 @@ static void Motor_Tick50us(void) {
 uint16_t Motor_GetModAngle16(void) {
     int16_t lead = SPWM_ANGLE_LEAD_Q16;
 
-    if (HALL_GetCmdDirection() == HALL_DIR_REV) {
+    if (HALL_GetDirection() == HALL_DIR_REV) {
         lead = (int16_t)(-lead);
     }
     return (uint16_t)(RotorAngle_GetRotor16() + (uint16_t)lead);
@@ -160,7 +160,6 @@ void Motor_Init(void) {
     s_motor_state = MOTOR_STATE_STOPPED;
     s_command     = MOTOR_CMD_NONE;
     s_direction   = HALL_DIR_FWD;
-    s_active_dir  = HALL_DIR_FWD;
     s_ready_ms    = 0;
     s_startup_ms  = 0;
     MC_Ramp_Init();
@@ -174,11 +173,10 @@ void Motor_Init(void) {
      * 各模式的观察者在下面注册，首次真实 Hall 沿发生在开中断之后，不会漏。 */
     HALL_Init();
 
-    /* 上电参考系固定正转（HALL_Init 不重置方向，此处把契约写死，
+    /* 上电参考方向固定正转（HALL_Init 不重置方向，此处把契约写死，
      * 防以后软重入/重复 Init 时残留上次运行方向）。
-     * 注意：这里锁存的是 s_active_dir；s_direction 只是期望方向，
-     * 真正切参考系统一在 READY 停稳门处执行。 */
-    HALL_SetCmdDirection(s_active_dir);
+     * 注意：s_direction 只是期望方向，真正切参考系统一在 READY 停稳门处执行。 */
+    HALL_SetDirection(s_direction);
 
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
     /* 
@@ -205,7 +203,7 @@ void Motor_Init(void) {
     s_motor_handle.state            = MOTOR_STATE_STOPPED;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
     s_motor_handle.dir              = (uint8_t)s_direction;
-    s_motor_handle.active_dir       = (uint8_t)s_active_dir;
+    s_motor_handle.active_dir       = (uint8_t)HALL_GetDirection();
     s_motor_handle.ramp             = MC_Ramp_GetHandle();
     s_motor_handle.fault            = MC_FAULT_NONE;
     s_motor_handle.hall_status      = 0;
@@ -317,14 +315,13 @@ void Motor_Tick(void) {
              * 否则边沿年龄会被清零，永远等不到停稳）：
              *   - 方向未变：直接放行（同方向重启不需要等转子停）；
              *   - 方向改变：等 Hall 边沿静默 ≥ REV_EDGE_QUIET_MS，确认转子已停，
-             *     再锁存 s_active_dir 并调用 HALL_SetCmdDirection，切观测器参考系。
+             *     再调用 HALL_SetDirection 锁存参考系（HALL 模块唯一持有）。
              * 转子仍在惰行时保持 READY（PWM 关断），本拍不启动。 */
-            if (s_direction != s_active_dir) {
+            if (s_direction != HALL_GetDirection()) {
                 if (HALL_MsSinceLastEdge() < REV_EDGE_QUIET_MS) {
                     break;   /* 等转子停稳 */
                 }
-                s_active_dir = s_direction;
-                HALL_SetCmdDirection(s_active_dir);
+                HALL_SetDirection(s_direction);
             }
 
             /* 旋钮 ≥ READY_MIN_KNOB：
@@ -404,7 +401,7 @@ Motor_Handle_t* Motor_GetHandle(void) {
     s_motor_handle.state            = s_motor_state;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
     s_motor_handle.dir              = (uint8_t)s_direction;
-    s_motor_handle.active_dir       = (uint8_t)s_active_dir;
+    s_motor_handle.active_dir       = (uint8_t)HALL_GetDirection();
     s_motor_handle.fault            = MC_GetFault();
     s_motor_handle.hall_status      = HALL_GetHallStatus();
     s_motor_handle.drive_en         = Drive_IsEnabled();

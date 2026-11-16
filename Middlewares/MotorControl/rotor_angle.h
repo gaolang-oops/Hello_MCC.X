@@ -38,7 +38,7 @@ void RotorAngle_Init(void);
 /* 用当前 Hall 状态重新计算静止初始角（扇区中点）：
  * FWD 进入沿 +30°，REV 进入沿 −30°。
  * 供上电初始化与启动前重新播种，避免沿用旧角度造成起始基准偏差。
- * 方向取 HALL_GetCmdDirection()（默认 FWD）。 */
+ * 方向取 HALL_GetDirection()（默认 FWD）。 */
 void RotorAngle_Seed(void);
 
 /* Hall 沿回调（注册到 HALL_RegisterOnEdge，IC ISR 内执行）：

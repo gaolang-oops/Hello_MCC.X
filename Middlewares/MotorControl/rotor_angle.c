@@ -44,7 +44,7 @@ static RotorAngle_t s_angle;
 /* 用当前 Hall 扇区中点重建静止角。
  * 静止时转子在扇区内位置未知，用扇区中点作为初值：
  * FWD 进入沿是下边界 -> +30°；REV 进入沿是上边界 -> -30°。
- * 方向取 HALL_GetCmdDirection()（默认 FWD）。 */
+ * 方向取 HALL_GetDirection()（默认 FWD）。 */
 void RotorAngle_Seed(void) {
     uint16_t pos = HALL_GetHallRotorPosition();
     uint16_t center;
@@ -53,7 +53,7 @@ void RotorAngle_Seed(void) {
     if (pos == HALL_ANGLE_INVALID) {
         center = 0u;   /* 无效 Hall：角度归零，等首个合法沿重同步 */
     } else {
-        center = (HALL_GetCmdDirection() == HALL_DIR_REV)
+        center = (HALL_GetDirection() == HALL_DIR_REV)
                ? (uint16_t)(pos - ROTOR_ANGLE_SECTOR_HALF)
                : (uint16_t)(pos + ROTOR_ANGLE_SECTOR_HALF);
     }

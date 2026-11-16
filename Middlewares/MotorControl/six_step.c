@@ -37,7 +37,7 @@ typedef struct {
  * "X正"=该相 PWM_HPWM_LOFF(上桥PWM), "X负"=该相 PWM_HOFF_LON(下桥常通), 第三相 PWM_HOFF_LOFF。
  *
  * TODO(反转)：另建 s_rev_table（每个 Hall 态把 HPWM_LOFF/HOFF_LON 两相互换），
- * 在 SIXSTEP_Communicate 中按 HALL_GetCmdDirection() 选表。当前只做正转。
+ * 在 SIXSTEP_Communicate 中按 HALL_GetDirection() 选表。当前只做正转。
  */
 static const CommutationStep_t s_fwd_table[8] = {
     [0] = {.u = PWM_HOFF_LOFF, .v = PWM_HOFF_LOFF, .w = PWM_HOFF_LOFF}, /* illegal */
@@ -115,7 +115,7 @@ void SIXSTEP_Communicate(uint8_t hall) {
         hall = 0; /* 防御性钳位 */
     }
     /* hall=0/7 落入 s_fwd_table 的全关安全态
-     * TODO(反转)：改为按 HALL_GetCmdDirection() 选择 s_fwd_table / s_rev_table。 */
+     * TODO(反转)：改为按 HALL_GetDirection() 选择 s_fwd_table / s_rev_table。 */
     const CommutationStep_t *step = &s_fwd_table[hall];
     PWM_SetPhaseMode(PWM_GENERATOR_1, step->u); /* U */
     PWM_SetPhaseMode(PWM_GENERATOR_2, step->v); /* V */

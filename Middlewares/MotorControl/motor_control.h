@@ -110,8 +110,9 @@ typedef enum {
  * 方向只在启动命令里携带，且仅 STOPPED 态响应：
  * 运行/充电/READY 期间按反方向键被忽略，必须先 STOP → STOPPED 再换向，
  * 杜绝带速反向启动（转动过程不做反向切换）。
- * STOPPED 只记录期望方向(s_direction)，真正的观测器参考系切换
- * (s_active_dir + HALL_SetCmdDirection) 延迟到 READY 且确认转子停稳后执行。 */
+ * STOPPED 只记录期望方向(s_direction)，真正的观测器参考方向切换
+ * (HALL_SetDirection) 延迟到 READY 且确认转子停稳后执行；
+ * 参考方向由 HALL 模块唯一持有，控制层不另存副本。 */
 typedef enum {
     MOTOR_CMD_NONE      = 0,   /* 空命令 */
     MOTOR_CMD_START_FWD,       /* 正转启动（KEY0）→ 仅 STOPPED 态响应 */
@@ -134,7 +135,7 @@ typedef struct {
     Motor_State_e  state;          /* 状态机当前状态 */
     uint8_t        drive_mode;     /* 驱动模式快照（MC_DRIVE_MODE_SIXSTEP/SPWM） */
     uint8_t        dir;            /* 期望方向快照 s_direction（0=FWD / 1=REV，同 HALL_Dir_e） */
-    uint8_t        active_dir;     /* 已锁存到观测器的方向 s_active_dir（未停稳前可能仍为旧方向） */
+    uint8_t        active_dir;     /* 观测器当前参考方向 HALL_GetDirection()（未停稳前可能仍为旧方向） */
     /* —— 子模块指针（视图，不拥有） —— */
     Ramp_Handle_t *ramp;           /* 占空比缓变句柄指针 */
     /* —— 子模块快照（GetHandle 时刷新） —— */
