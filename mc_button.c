@@ -5,10 +5,15 @@
  * 非阻塞消抖状态机，1ms 节拍由主循环 Tier-2 调用。
  *
  * 事件 → 命令映射（一次性命令，状态机消费即清零）：
- *   KEY0 短按/长按 → Motor_SetCommand(MOTOR_CMD_START)
- *   KEY1 短按/长按 → Motor_SetCommand(MOTOR_CMD_STOP)（硬停：立即关 PWM）
+ *   KEY0 短按/长按 → Motor_SetCommand(MOTOR_CMD_START_FWD)（正转启动）
+ *   KEY1 短按/长按 → Motor_SetCommand(MOTOR_CMD_START_REV)（反转启动）
  *   KEY2 短按        → Motor_SetCommand(MOTOR_CMD_STOP)（硬停：立即关 PWM）
  *   KEY2 长按        → MC_ClearAllFaults()            （仅当存在故障时）
+ *
+ * 换向规则：启动命令只在状态机 STOPPED 态被接受；运行/充电/READY 期间
+ * 按 KEY0/KEY1 一律忽略，必须先 KEY2 停机再选方向。
+ * 同拍多键：处理顺序 KEY0→KEY1→KEY2，Motor_SetCommand 末写胜，
+ * 因此 STOP 永远优先于启动（安全侧）。
  */
 
 #include "mc_button.h"
@@ -106,26 +111,27 @@ void MOTOR_SECTION MCButton_Init(void) {
 }
 
 void MOTOR_SECTION MCButton_Tick1ms(void) {
+    /* KEY0：正转启动（仅 STOPPED 态生效，运行中忽略） */
     switch (btn_press_tick(&s_key0, KEY0)) {
         case BTN_EV_SHORT:
         case BTN_EV_LONG:
-            Motor_SetCommand(MOTOR_CMD_START);
+            Motor_SetCommand(MOTOR_CMD_START_FWD);
             break;
         default:
             break;
     }
 
-    /* KEY1：短按/长按均停机（硬停） */
+    /* KEY1：反转启动（仅 STOPPED 态生效；换向须先 KEY2 停机） */
     switch (btn_press_tick(&s_key1, KEY1)) {
         case BTN_EV_SHORT:
         case BTN_EV_LONG:
-            Motor_SetCommand(MOTOR_CMD_STOP);
+            Motor_SetCommand(MOTOR_CMD_START_REV);
             break;
         default:
             break;
     }
 
-    /* KEY2：短按停机，长按清故障 */
+    /* KEY2：短按停机，长按清故障（正常运行时长按不动作，仅故障存在时清） */
     switch (btn_press_tick(&s_key2, KEY2)) {
         case BTN_EV_SHORT:
             Motor_SetCommand(MOTOR_CMD_STOP);

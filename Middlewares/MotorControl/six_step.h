@@ -6,7 +6,11 @@
  *
  * 六步换相模块
  * 仅正转单表；换相在 Hall ISR 内调用 SIXSTEP_Communicate() 执行。
- */
+ *
+ * TODO(反转)：当前只实现正转换相（s_fwd_table）。反转需增加 s_rev_table
+ * （同一 Hall 态交换"上桥 PWM 相"与"下桥常通相"），并在此按
+ * HALL_GetCmdDirection() 选表。motor_control.c 在六步构建下已拒绝
+ * MOTOR_CMD_START_REV，避免"按反转键却按正转表换相"。 */
 
 #ifndef SIX_STEP_H
 #define	SIX_STEP_H

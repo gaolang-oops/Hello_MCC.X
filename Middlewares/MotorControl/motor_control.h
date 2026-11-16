@@ -84,11 +84,11 @@ extern "C" {
 #endif /* __cplusplus */
 
 typedef enum {
-    MOTOR_STATE_STOPPED = 0,   // 停机：硬关 6 管(PWM_AllOff)，等待 KEY0 允许
+    MOTOR_STATE_STOPPED = 0,   // 停机：硬关 6 管(PWM_AllOff)，等 KEY0(正转)/KEY1(反转) 启动
     MOTOR_STATE_FAULT,         // 故障吸收态：任意态+fault 进入；仅外部清故障可转出→STOPPED
     MOTOR_STATE_BOOTSTRAP,     // 瞬态：自举充电启动(六步=下管常通 HOFF_LON；SPWM=下桥 PWM HOFF_LPWM)，立即迁移到 CHARGING
     MOTOR_STATE_CHARGING,      // 稳态：等待自举电容充电 50ms 完成
-    MOTOR_STATE_READY,         // 就绪：充电完成，PWM 使能，等旋钮指令；超时回 STOPPED
+    MOTOR_STATE_READY,         // 就绪：充电完成，PWM 使能，等旋钮指令（不响应启停键）；超时回 STOPPED
     MOTOR_STATE_STARTUP,       // SPWM 启动保持：固定低 duty，等转子加速/反电动势建立
     MOTOR_STATE_RUNNING,       // 运行：按指令占空比输出
 } Motor_State_e;
@@ -97,11 +97,16 @@ typedef enum {
 
 /* 应用层 → 状态机 的一次性命令（对齐 ST MCSDK DirectCommand 思想）。
  * 应用层（按键/协议）写，状态机每拍快照后清零消费 —— 状态机不写回，
- * 重启须显式再次下发 START（故障清除 / 超时后自动 re-arm，无电平残留）。 */
+ * 重启须显式再次下发 START_xxx（故障清除 / 超时后自动 re-arm，无电平残留）。
+ *
+ * 方向只在启动命令里携带，且仅 STOPPED 态响应：
+ * 运行/充电/READY 期间按反方向键被忽略，必须先 STOP → STOPPED 再换向，
+ * 杜绝带速反向启动（转动过程不做反向切换）。 */
 typedef enum {
-    MOTOR_CMD_NONE  = 0,   /* 空命令 */
-    MOTOR_CMD_START,       /* 请求启动（KEY0 短按）→ 仅 STOPPED 态响应 */
-    MOTOR_CMD_STOP,        /* 请求停机（KEY1 短按）→ 立即硬关 PWM + 清占空比 → STOPPED */
+    MOTOR_CMD_NONE      = 0,   /* 空命令 */
+    MOTOR_CMD_START_FWD,       /* 正转启动（KEY0）→ 仅 STOPPED 态响应 */
+    MOTOR_CMD_START_REV,       /* 反转启动（KEY1）→ 仅 STOPPED 态响应 */
+    MOTOR_CMD_STOP,            /* 请求停机（KEY2 短按）→ 立即硬关 PWM + 清占空比 → STOPPED */
 } Motor_Cmd_e;
 
 /*
@@ -118,6 +123,7 @@ typedef struct {
     /* —— 状态机层 —— */
     Motor_State_e  state;          /* 状态机当前状态 */
     uint8_t        drive_mode;     /* 驱动模式快照（MC_DRIVE_MODE_SIXSTEP/SPWM） */
+    uint8_t        dir;            /* 命令方向快照（0=FWD 正转 / 1=REV 反转，同 HALL_Dir_e） */
     /* —— 子模块指针（视图，不拥有） —— */
     Ramp_Handle_t *ramp;           /* 占空比缓变句柄指针 */
     /* —— 子模块快照（GetHandle 时刷新） —— */
@@ -133,7 +139,7 @@ typedef struct {
 
 void Motor_Init(void);                 // 单一入口，内部包装全部 motor 层子模块初始化
 void Motor_Tick(void);                 // 1ms 节拍推进状态机（Tier-2 控制层，由主循环调用）
-void Motor_SetCommand(Motor_Cmd_e cmd);// 应用层下发一次性命令（START/STOP），状态机消费即清零
+void Motor_SetCommand(Motor_Cmd_e cmd);// 应用层下发一次性命令（START_FWD/START_REV/STOP），状态机消费即清零
 
 /* 获取电机统一句柄（快照方式，调试/监控用）
  * 含连续电气角 rotor_angle16 与合成调制角 mod_angle16

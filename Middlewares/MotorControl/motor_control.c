@@ -10,9 +10,10 @@
  * 状态机经 Drive_Enable() 门面统一使能/失能。
  *
  * 命令模型（对齐 ST MCSDK DirectCommand）：
- *   应用层（按键/协议）经 Motor_SetCommand 下发一次性命令（START/STOP），
- *   状态机每拍快照后清零消费 —— 状态机不写回命令。
- *   重启须显式再次下发 START（故障清除 / 超时后自动 re-arm，无电平残留）。
+ *   应用层（按键/协议）经 Motor_SetCommand 下发一次性命令
+ *   （START_FWD/START_REV/STOP），状态机每拍快照后清零消费 —— 状态机不写回命令。
+ *   重启须显式再次下发 START_xxx（故障清除 / 超时后自动 re-arm，无电平残留）。
+ *   方向随启动命令携带，且仅在 STOPPED 态响应：运行中不能换向。
  */
 
 #include "motor_control.h"
@@ -30,6 +31,7 @@ static uint16_t s_bootstrap_start_ms = 0;        /* 自举充电起始时间戳 
 static uint16_t s_ready_ms = 0;                  /* READY 态停留计时 */
 static uint16_t s_startup_ms = 0;                /* STARTUP 启动保持起始时间戳 */
 static Motor_Cmd_e s_command = MOTOR_CMD_NONE;   /* 一次性命令锁存（应用层写，状态机消费清零）*/
+static HALL_Dir_e  s_direction = HALL_DIR_FWD;   /* 命令方向（启动命令携带，仅 STOPPED 更新）*/
 static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合）*/
 
 /* 输出门面（模式分发） */
@@ -151,6 +153,7 @@ static void Drive_Output(void) {
 void Motor_Init(void) {
     s_motor_state = MOTOR_STATE_STOPPED;
     s_command     = MOTOR_CMD_NONE;
+    s_direction   = HALL_DIR_FWD;
     s_ready_ms    = 0;
     s_startup_ms  = 0;
     MC_Ramp_Init();
@@ -163,6 +166,10 @@ void Motor_Init(void) {
      * HALL_Init 只做种子读取/ISR 注册、不会触发 s_on_edge；
      * 各模式的观察者在下面注册，首次真实 Hall 沿发生在开中断之后，不会漏。 */
     HALL_Init();
+
+    /* 上电命令方向固定正转（HALL_Init 不重置方向，此处把契约写死，
+     * 防以后软重入/重复 Init 时残留上次运行方向）。 */
+    HALL_SetCmdDirection(s_direction);
 
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
     /* 
@@ -188,6 +195,7 @@ void Motor_Init(void) {
     /* 绑定统一句柄 */
     s_motor_handle.state            = MOTOR_STATE_STOPPED;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
+    s_motor_handle.dir              = (uint8_t)s_direction;
     s_motor_handle.ramp             = MC_Ramp_GetHandle();
     s_motor_handle.fault            = MC_FAULT_NONE;
     s_motor_handle.hall_status      = 0;
@@ -246,10 +254,24 @@ void Motor_Tick(void) {
 
         case MOTOR_STATE_STOPPED:
             /* 停机：关驱动输出（模式分发）+ 清占空比。
-             * 启动条件：CMD_START → 进入预充电瞬态。 */
+             * 启动条件：START_FWD/START_REV → 切换命令方向后进入预充电瞬态。
+             * 方向只在此处生效：其余态（含 READY/运行）不响应启动命令，
+             * 因此换向必须先 STOP 回 STOPPED。 */
             Drive_Enable(false);
             if (MC_Ramp_GetCurrentDuty() != 0) MC_Ramp_ForceZero();
-            if (cmd == MOTOR_CMD_START) {
+            if (cmd == MOTOR_CMD_START_FWD || cmd == MOTOR_CMD_START_REV) {
+#if (MC_DRIVE_MODE == MC_DRIVE_MODE_SIXSTEP)
+                /* TODO: 六步反转表（s_rev_table）尚未实现，先拒绝反转启动，
+                 * 避免"按反转键却按正转表换相"。SPWM 构建不参与编译。 */
+                if (cmd == MOTOR_CMD_START_REV) {
+                    break;
+                }
+#endif
+                s_direction = (cmd == MOTOR_CMD_START_REV) ? HALL_DIR_REV : HALL_DIR_FWD;
+                /* 必须先切方向：随后的 BOOTSTRAP/READY 里 RotorAngle_Seed() 要按
+                 * 新方向取 Hall 扇区中点，SPWM 的 θ 积分符号与 −90° 超前角也依赖它。
+                 * 并发：主循环写、Hall ISR/ADC ISR 读，单字写原子。 */
+                HALL_SetCmdDirection(s_direction);
                 s_motor_state = MOTOR_STATE_BOOTSTRAP;
             }
             break;
@@ -359,6 +381,7 @@ void Motor_Tick(void) {
 Motor_Handle_t* Motor_GetHandle(void) {
     s_motor_handle.state            = s_motor_state;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
+    s_motor_handle.dir              = (uint8_t)s_direction;
     s_motor_handle.fault            = MC_GetFault();
     s_motor_handle.hall_status      = HALL_GetHallStatus();
     s_motor_handle.drive_en         = Drive_IsEnabled();

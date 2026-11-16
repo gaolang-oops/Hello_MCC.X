@@ -192,9 +192,9 @@ static void /*__attribute__((unused))*/ MAIN_SECTION Debug_Report(void)
 	Motor_Handle_t *m = Motor_GetHandle();
 
 	/* 电机状态经统一句柄读取 */
-	printf("mode=%d state=%d fault=0x%X hall=%d en=%d duty=%u/%u age=%lums\n",
-	       m->drive_mode,
-	       m->state, (uint16_t)m->fault, m->hall_status,
+	printf("mode=%d state=%d dir=%s fault=0x%X hall=%d en=%d duty=%u/%u age=%lums\n",
+	       m->drive_mode, m->state, m->dir ? "REV" : "FWD",
+	       (uint16_t)m->fault, m->hall_status,
 	       (uint16_t)m->drive_en, m->target_duty, m->current_duty,
 	       (unsigned long)m->last_edge_age_ms);
 	/* 转子角：Hall 估计角 θr + 实际调制角 θmod（brad16） */
