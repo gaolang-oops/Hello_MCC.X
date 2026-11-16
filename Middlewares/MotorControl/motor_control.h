@@ -95,13 +95,23 @@ typedef enum {
 
 #define READY_TIMEOUT_MS    30000U
 
+/* 反向启动"停稳门"(ms)：Hall 边沿静默超过此时长才认为转子已停稳。
+ * 用途：方向变化时，必须等转子真正停下，才允许切换观测器参考系
+ * （θ 积分符号 / 反向 Hall 进入角表 / −90° 超前角），否则观测器会按
+ * 新方向积分而转子仍在旧方向惰行 → θ 错扇区、反向启动电流大。
+ * 60° 一个 Hall 边沿，200ms 约对应 <25 rpm。
+ * 建议保持 < MC_Fault 的 HALL_TIMEOUT_MS(500)，留出裕量。 */
+#define REV_EDGE_QUIET_MS   200U
+
 /* 应用层 → 状态机 的一次性命令（对齐 ST MCSDK DirectCommand 思想）。
  * 应用层（按键/协议）写，状态机每拍快照后清零消费 —— 状态机不写回，
  * 重启须显式再次下发 START_xxx（故障清除 / 超时后自动 re-arm，无电平残留）。
  *
  * 方向只在启动命令里携带，且仅 STOPPED 态响应：
  * 运行/充电/READY 期间按反方向键被忽略，必须先 STOP → STOPPED 再换向，
- * 杜绝带速反向启动（转动过程不做反向切换）。 */
+ * 杜绝带速反向启动（转动过程不做反向切换）。
+ * STOPPED 只记录期望方向(s_direction)，真正的观测器参考系切换
+ * (s_active_dir + HALL_SetCmdDirection) 延迟到 READY 且确认转子停稳后执行。 */
 typedef enum {
     MOTOR_CMD_NONE      = 0,   /* 空命令 */
     MOTOR_CMD_START_FWD,       /* 正转启动（KEY0）→ 仅 STOPPED 态响应 */
@@ -123,7 +133,8 @@ typedef struct {
     /* —— 状态机层 —— */
     Motor_State_e  state;          /* 状态机当前状态 */
     uint8_t        drive_mode;     /* 驱动模式快照（MC_DRIVE_MODE_SIXSTEP/SPWM） */
-    uint8_t        dir;            /* 命令方向快照（0=FWD 正转 / 1=REV 反转，同 HALL_Dir_e） */
+    uint8_t        dir;            /* 期望方向快照 s_direction（0=FWD / 1=REV，同 HALL_Dir_e） */
+    uint8_t        active_dir;     /* 已锁存到观测器的方向 s_active_dir（未停稳前可能仍为旧方向） */
     /* —— 子模块指针（视图，不拥有） —— */
     Ramp_Handle_t *ramp;           /* 占空比缓变句柄指针 */
     /* —— 子模块快照（GetHandle 时刷新） —— */

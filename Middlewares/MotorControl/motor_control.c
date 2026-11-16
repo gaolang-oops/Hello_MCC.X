@@ -14,6 +14,11 @@
  *   （START_FWD/START_REV/STOP），状态机每拍快照后清零消费 —— 状态机不写回命令。
  *   重启须显式再次下发 START_xxx（故障清除 / 超时后自动 re-arm，无电平残留）。
  *   方向随启动命令携带，且仅在 STOPPED 态响应：运行中不能换向。
+ *
+ * 方向锁存（两段式）：
+ *   s_direction  : 用户期望方向，STOPPED 收到 START_FWD/REV 时更新；
+ *   s_active_dir : 已锁存到观测器的参考系，READY 且确认转子停稳后才更新。
+ *   两者分离是为了避免"转子还在旧方向惰行、观测器已按新方向积分"。
  */
 
 #include "motor_control.h"
@@ -31,7 +36,8 @@ static uint16_t s_bootstrap_start_ms = 0;        /* 自举充电起始时间戳 
 static uint16_t s_ready_ms = 0;                  /* READY 态停留计时 */
 static uint16_t s_startup_ms = 0;                /* STARTUP 启动保持起始时间戳 */
 static Motor_Cmd_e s_command = MOTOR_CMD_NONE;   /* 一次性命令锁存（应用层写，状态机消费清零）*/
-static HALL_Dir_e  s_direction = HALL_DIR_FWD;   /* 命令方向（启动命令携带，仅 STOPPED 更新）*/
+static HALL_Dir_e  s_direction = HALL_DIR_FWD;   /* 期望方向（启动命令携带，仅 STOPPED 更新）*/
+static HALL_Dir_e  s_active_dir = HALL_DIR_FWD;  /* 已锁存到观测器的参考系（READY 停稳后更新）*/
 static Motor_Handle_t s_motor_handle;            /* 统一句柄（快照聚合）*/
 
 /* 输出门面（模式分发） */
@@ -154,6 +160,7 @@ void Motor_Init(void) {
     s_motor_state = MOTOR_STATE_STOPPED;
     s_command     = MOTOR_CMD_NONE;
     s_direction   = HALL_DIR_FWD;
+    s_active_dir  = HALL_DIR_FWD;
     s_ready_ms    = 0;
     s_startup_ms  = 0;
     MC_Ramp_Init();
@@ -167,9 +174,11 @@ void Motor_Init(void) {
      * 各模式的观察者在下面注册，首次真实 Hall 沿发生在开中断之后，不会漏。 */
     HALL_Init();
 
-    /* 上电命令方向固定正转（HALL_Init 不重置方向，此处把契约写死，
-     * 防以后软重入/重复 Init 时残留上次运行方向）。 */
-    HALL_SetCmdDirection(s_direction);
+    /* 上电参考系固定正转（HALL_Init 不重置方向，此处把契约写死，
+     * 防以后软重入/重复 Init 时残留上次运行方向）。
+     * 注意：这里锁存的是 s_active_dir；s_direction 只是期望方向，
+     * 真正切参考系统一在 READY 停稳门处执行。 */
+    HALL_SetCmdDirection(s_active_dir);
 
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
     /* 
@@ -196,6 +205,7 @@ void Motor_Init(void) {
     s_motor_handle.state            = MOTOR_STATE_STOPPED;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
     s_motor_handle.dir              = (uint8_t)s_direction;
+    s_motor_handle.active_dir       = (uint8_t)s_active_dir;
     s_motor_handle.ramp             = MC_Ramp_GetHandle();
     s_motor_handle.fault            = MC_FAULT_NONE;
     s_motor_handle.hall_status      = 0;
@@ -254,9 +264,11 @@ void Motor_Tick(void) {
 
         case MOTOR_STATE_STOPPED:
             /* 停机：关驱动输出（模式分发）+ 清占空比。
-             * 启动条件：START_FWD/START_REV → 切换命令方向后进入预充电瞬态。
-             * 方向只在此处生效：其余态（含 READY/运行）不响应启动命令，
-             * 因此换向必须先 STOP 回 STOPPED。 */
+             * 启动条件：START_FWD/START_REV → 记录期望方向后进入预充电瞬态。
+             * 方向命令只在此处响应：其余态（含 READY/运行）不响应启动命令，
+             * 因此换向必须先 STOP 回 STOPPED。
+             * 注意：此处只记 s_direction，不切 HALL 参考系 —— 硬停后转子
+             * 可能仍在原方向惰行，须等 READY 停稳门确认停稳后再锁存。 */
             Drive_Enable(false);
             if (MC_Ramp_GetCurrentDuty() != 0) MC_Ramp_ForceZero();
             if (cmd == MOTOR_CMD_START_FWD || cmd == MOTOR_CMD_START_REV) {
@@ -268,10 +280,6 @@ void Motor_Tick(void) {
                 }
 #endif
                 s_direction = (cmd == MOTOR_CMD_START_REV) ? HALL_DIR_REV : HALL_DIR_FWD;
-                /* 必须先切方向：随后的 BOOTSTRAP/READY 里 RotorAngle_Seed() 要按
-                 * 新方向取 Hall 扇区中点，SPWM 的 θ 积分符号与 −90° 超前角也依赖它。
-                 * 并发：主循环写、Hall ISR/ADC ISR 读，单字写原子。 */
-                HALL_SetCmdDirection(s_direction);
                 s_motor_state = MOTOR_STATE_BOOTSTRAP;
             }
             break;
@@ -304,8 +312,22 @@ void Motor_Tick(void) {
             break;
 
         case MOTOR_STATE_READY:
-            /* 就绪：PWM 使能，自举已充，等旋钮指令。
-             * 旋钮 ≥ READY_MIN_KNOB：
+            /* 就绪：自举已充，等旋钮指令。
+             * 方向锁存 + 停稳门（必须在 HALL_ResetEdgeTimer() 之前判断，
+             * 否则边沿年龄会被清零，永远等不到停稳）：
+             *   - 方向未变：直接放行（同方向重启不需要等转子停）；
+             *   - 方向改变：等 Hall 边沿静默 ≥ REV_EDGE_QUIET_MS，确认转子已停，
+             *     再锁存 s_active_dir 并调用 HALL_SetCmdDirection，切观测器参考系。
+             * 转子仍在惰行时保持 READY（PWM 关断），本拍不启动。 */
+            if (s_direction != s_active_dir) {
+                if (HALL_MsSinceLastEdge() < REV_EDGE_QUIET_MS) {
+                    break;   /* 等转子停稳 */
+                }
+                s_active_dir = s_direction;
+                HALL_SetCmdDirection(s_active_dir);
+            }
+
+            /* 旋钮 ≥ READY_MIN_KNOB：
              *   SPWM  → STARTUP（固定低 duty 500ms，再进 RUNNING）
              *   六步  → 直接 RUNNING
              * 超时30s且旋钮=0 → STOPPED */
@@ -382,6 +404,7 @@ Motor_Handle_t* Motor_GetHandle(void) {
     s_motor_handle.state            = s_motor_state;
     s_motor_handle.drive_mode       = MC_DRIVE_MODE;
     s_motor_handle.dir              = (uint8_t)s_direction;
+    s_motor_handle.active_dir       = (uint8_t)s_active_dir;
     s_motor_handle.fault            = MC_GetFault();
     s_motor_handle.hall_status      = HALL_GetHallStatus();
     s_motor_handle.drive_en         = Drive_IsEnabled();
