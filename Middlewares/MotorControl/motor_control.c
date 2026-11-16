@@ -311,7 +311,7 @@ void Motor_Tick(void) {
 
         case MOTOR_STATE_READY:
             /* 就绪：自举已充，等旋钮指令。
-             * 方向锁存 + 停稳门（必须在 HALL_ResetEdgeTimer() 之前判断，
+             * 方向锁存 + 停稳门（必须在 HALL_ResetForStart() 之前判断，
              * 否则边沿年龄会被清零，永远等不到停稳）：
              *   - 方向未变：直接放行（同方向重启不需要等转子停）；
              *   - 方向改变：等 Hall 边沿静默 ≥ REV_EDGE_QUIET_MS，确认转子已停，
@@ -331,7 +331,7 @@ void Motor_Tick(void) {
             if (MC_GetKnobSpeed() >= READY_MIN_KNOB_UQ16) {
             	/* 重置霍尔边沿计时基准:把 HALL_TIMEOUT 窗口从"进入运行"起算,
                  * 防长时间停机后重启时旧时戳导致首个 RUNNING 拍误报 HALL_TIMEOUT。 */
-            	HALL_ResetEdgeTimer();
+            	HALL_ResetForStart();
 #if (MC_DRIVE_MODE == MC_DRIVE_MODE_SPWM)
                 /* 静止时 dt=0 会让转子角积分冻结；用 50rpm 种子让角度立即旋转，
                  * 真实 Hall 沿到来后由 HALL_UpdateDt 自动替换。六步换相不需要。 */

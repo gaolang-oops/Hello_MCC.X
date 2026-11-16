@@ -88,7 +88,7 @@ HALL_StepQ16_t HALL_GetThetaStep(void);
 
 /* 启动种子：在还没有 Hall 边沿时，给 60° 间隔 dt 一个初值，并同步刷新
  * dt_ticks / step / 边沿计时，使 RotorAngle 立即开始积分（否则 dt=0 会冻结）。
- * 调用时机：进入 RUNNING 前（HALL_ResetEdgeTimer 之后）。
+ * 调用时机：进入 RUNNING 前（HALL_ResetForStart 之后）。
  * 真实 Hall 沿到来后，HALL_UpdateDt/HALL_UpdateStep 会用实测 dt 替换种子。
  * dt_ticks 会被钳到 [HALL_DT_MAX_SPEED_TICKS, HALL_DT_MAX_TICKS]。 */
 void HALL_SeedDt(uint16_t dt_ticks);
@@ -107,9 +107,11 @@ uint16_t HALL_GetSpeedRpm(void);
  * 0 表示刚发生边沿;值越大说明电机越慢或停转。 */
 uint16_t HALL_MsSinceLastEdge(void);
 
-/* 重置"距上次边沿"计时基准为当前时刻。进入 RUNNING 态前调用,
- * 避免长时间停机后重启误报 HALL_TIMEOUT(详见 .c 实现注释)。 */
-void HALL_ResetEdgeTimer(void);
+/* 启动前重置 Hall 测量基准：刷新“距上次边沿”时戳 + 清空 dt/step/滑动平均。
+ * 进入 RUNNING 态前调用：既避免长时停机后误报 HALL_TIMEOUT，
+ * 又丢弃上次运行的旧测速数据（详见 .c 实现注释）。
+ * 之后通常紧跟 HALL_SeedDt() 播种。 */
+void HALL_ResetForStart(void);
 
 /* TODO: 极对数 POLE_PAIR_NUM 须在实现 GetSpeedRpm 前定义 */
 

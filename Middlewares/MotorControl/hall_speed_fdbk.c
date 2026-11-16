@@ -214,7 +214,7 @@ static bool HALL_UpdateInputState(void)
     return true;
 }
 
-/* 清空 dt 状态：初始化与重启（HALL_ResetEdgeTimer）共用。
+/* 清空 dt 状态：初始化与启动前重置（HALL_ResetForStart）共用。
  * 清 base 后首个合法沿只重建基准，不产生 dt；滑动平均窗口同时清空。 */
 static void HALL_ResetDt(void) {
     uint16_t ipl_saved;
@@ -309,13 +309,17 @@ uint16_t HALL_MsSinceLastEdge(void) {
     return (uint16_t)(MC_GetTickMs() - s_last_edge_tick_ms);
 }
 
-/* 重置"距上次边沿"计时基准为当前时刻。
- * 调用时机: 进入 RUNNING 态前(自举充电完成、SIXSTEP_Enable(true) 之前)。
- * 目的: 把 HALL_TIMEOUT 检测窗口从"进入运行那一刻"起算,避免长时间停机后
- *       重启时 s_last_edge_tick_ms 仍是上次运行的旧时戳 -> 首个 RUNNING 拍
- *       age 已超阈值而误报 HALL_TIMEOUT。
+/* 启动前重置 Hall 测量基准（一次调用同时完成两件事）：
+ *   1) HALL_TIMEOUT 计时基准 = 当前时刻：避免长时间停机后重启时
+ *      s_last_edge_tick_ms 仍是上次运行的旧时戳 -> 首个 RUNNING 拍
+ *      age 已超阈值而误报 HALL_TIMEOUT；
+ *   2) 清空测速状态（HALL_ResetDt）：重启后首个 60° 间隔必须重新建立，
+ *      防止上次运行的 dt/step 被当成当前速度。
+ * 调用时机: 进入 RUNNING 前（自举充电完成、Drive_Enable(true) 之前）。
+ * 调用后通常紧跟 HALL_SeedDt() 播种，使角度立即开始积分。
+ * 两件事必须成对：只刷时戳会沿用旧速度，只清测速会把时戳留在旧位置。
  * 并发: 主循环(pri 0)与 HALL_OnIsr(pri 7)均写当前时戳,最坏差亚毫秒,可忽略。 */
-void HALL_ResetEdgeTimer(void) {
+void HALL_ResetForStart(void) {
     s_last_edge_tick_ms = MC_GetTickMs();
 
     /* 同时丢弃旧的速度基准：重启后首个 60° 间隔必须重新建立，
