@@ -88,7 +88,8 @@ typedef enum {
     MOTOR_STATE_FAULT,         // 故障吸收态：任意态+fault 进入；仅外部清故障可转出→STOPPED
     MOTOR_STATE_BOOTSTRAP,     // 瞬态：自举充电启动(六步=下管常通 HOFF_LON；SPWM=下桥 PWM HOFF_LPWM)，立即迁移到 CHARGING
     MOTOR_STATE_CHARGING,      // 稳态：等待自举电容充电 50ms 完成
-    MOTOR_STATE_READY,         // 就绪：充电完成，PWM 使能，等旋钮指令（不响应启停键）；超时回 STOPPED
+    MOTOR_STATE_READY,         // 就绪：自举已充，等旋钮指令（不响应启停键）；CHARGING 进入=桥臂全关，
+                               // RUNNING 缓停进入=驱动仍使能(50% 零矢量)；超时回 STOPPED
     MOTOR_STATE_STARTUP,       // SPWM 启动保持：固定低 duty，等转子加速/反电动势建立
     MOTOR_STATE_RUNNING,       // 运行：按指令占空比输出
 } Motor_State_e;

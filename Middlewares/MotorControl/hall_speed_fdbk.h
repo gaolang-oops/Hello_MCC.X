@@ -62,7 +62,8 @@ uint16_t HALL_GetHallRotorPosition(void);
  *   若本次捕获溢出/积压/间隔异常，保留上一次平均值不覆盖。
  *   结果按最高转速钳位：dt 不小于 HALL_DT_MAX_SPEED_TICKS（342 tick，
  *   对应 4000 rpm @ p=2），因此 HALL_GetThetaStep() 也不会超过该转速。
- *   0 = 尚未建立或已被 ResetEdgeTimer 清零。
+ *   0 = 尚未建立，或已被 HALL_ResetForStart() 清零
+ *       （随后通常紧跟 HALL_SeedDt() 播种为非 0）。
  * 消费方须结合 HALL_MsSinceLastEdge() 判断数据是否新鲜（停机后旧值会保留）。 */
 uint16_t HALL_GetEdgeDtTicks(void);
 

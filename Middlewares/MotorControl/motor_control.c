@@ -316,7 +316,14 @@ void Motor_Tick(void) {
              *   - 方向未变：直接放行（同方向重启不需要等转子停）；
              *   - 方向改变：等 Hall 边沿静默 ≥ REV_EDGE_QUIET_MS，确认转子已停，
              *     再调用 HALL_SetDirection 锁存参考系（HALL 模块唯一持有）。
-             * 转子仍在惰行时保持 READY（PWM 关断），本拍不启动。 */
+             * 转子仍在惰行时保持 READY，本拍不启动。
+             *
+             * READY 的驱动闸门取决于进入路径（勿混）：
+             *   - STOPPED→BOOTSTRAP→CHARGING→READY：CHARGING 末拍已 PWM_AllOff，
+             *     本态不再使能，桥臂 6 管强制关断；
+             *   - RUNNING 缓停到 duty=0→READY：未调 Drive_Enable(false)，
+             *     使能保持 true，桥臂维持 50% 中点互补开关（三相共模零矢量，
+             *     差压≈0；下桥每周期导通一半，对惰行转子有动态制动效果）。 */
             if (s_direction != HALL_GetDirection()) {
                 if (HALL_MsSinceLastEdge() < REV_EDGE_QUIET_MS) {
                     break;   /* 等转子停稳 */
@@ -379,7 +386,10 @@ void Motor_Tick(void) {
              * SPWM 不走这里，由 50µs Motor_Tick50us 的 Drive_Output 输出。 */
             Drive_Output();
 #endif
-            /* 缓停完成：幅值已到 0 且旋钮仍低于运行下限 → READY */
+            /* 缓停完成：幅值已到 0 且旋钮仍低于运行下限 → READY。
+             * 注意：本迁移不调 Drive_Enable(false)，驱动闸门保持 true，
+             * 桥臂继续 50% 中点互补开关（详见 READY case 的说明）；
+             * 彻底关断仍由 STOPPED / FAULT 负责。 */
             if (MC_Ramp_GetCurrentDuty() == 0u &&
                 MC_GetKnobSpeed() < RUN_MIN_KNOB_UQ16) {
                 s_ready_ms = 0;
